@@ -1,0 +1,25 @@
+{
+  "t1": { "name": "T1", "size": 5, "department": "D1" },
+  "t2": { "name": "T2", "size": 4, "department": "D1" },
+  "t3": { "name": "T3", "size": 3, "department": "D2" },
+  "t4": { "name": "T4", "size": 3, "department": "D3" },
+  "t5": { "name": "T5", "size": 3, "department": "D4" },
+  "t6": { "name": "T6", "size": 3, "department": "D4" },
+  "t7": { "name": "T7", "size": 3, "department": "D4" },
+  "t8": { "name": "T8", "size": 4, "department": "D4" },
+  "t9": { "name": "T9", "size": 3, "department": "D2" },
+  "t10": { "name": "T10", "size": 3, "department": "D3" },
+  "t11": { "name": "T11", "size": 3, "department": "D3" },
+  "t12": { "name": "T12", "size": 3, "department": "D3" },
+  "t13": { "name": "T13", "size": 3, "department": "D3" },
+  "t14": { "name": "T14", "size": 3, "department": "D3" },
+  "t15": { "name": "T15", "size": 3, "department": "D3" },
+  "t16": { "name": "T16", "size": 3, "department": "D3" },
+  "t17": { "name": "T17", "size": 3, "department": "D3" },
+  "t18": { "name": "T18", "size": 3, "department": "D3" },
+  "t19": { "name": "T19", "size": 2, "department": "D3" },
+  "t20": { "name": "T20", "size": 2, "department": "D3" },
+  "t21": { "name": "T21", "size": 4, "department": "D3" },
+  "t22": { "name": "T22", "size": 2, "department": "D3" }
+}
+
