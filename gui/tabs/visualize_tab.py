@@ -64,11 +64,33 @@ class VisualizeTab(QWidget):
         self._legend_layout.setSpacing(12)
         layout.addWidget(self._legend_widget)
 
-        # --- Grid ---
-        self._grid = OfficeGridView()
-        layout.addWidget(self._grid, stretch=1)
+        # --- Zoom controls ---
+        zoom_bar = QHBoxLayout()
+        zoom_bar.setSpacing(4)
+        self._zoom_in_btn = QPushButton("+")
+        self._zoom_in_btn.setFixedSize(28, 22)
+        self._zoom_in_btn.setToolTip("Zoom in (Ctrl+scroll)")
+        self._zoom_out_btn = QPushButton("−")
+        self._zoom_out_btn.setFixedSize(28, 22)
+        self._zoom_out_btn.setToolTip("Zoom out (Ctrl+scroll)")
+        self._zoom_reset_btn = QPushButton("Fit")
+        self._zoom_reset_btn.setFixedSize(36, 22)
+        self._zoom_reset_btn.setToolTip("Reset zoom to fit")
+        for btn in (self._zoom_in_btn, self._zoom_out_btn, self._zoom_reset_btn):
+            btn.setStyleSheet(
+                "QPushButton { font-size: 12px; padding: 0 4px; border: 1px solid #bbb;"
+                " border-radius: 3px; background: #f5f5f5; }"
+                "QPushButton:hover { background: #e0e0e0; }"
+            )
+        zoom_bar.addWidget(self._zoom_in_btn)
+        zoom_bar.addWidget(self._zoom_out_btn)
+        zoom_bar.addWidget(self._zoom_reset_btn)
+        zoom_bar.addStretch()
+        layout.addLayout(zoom_bar)
 
-        # --- Bottom tables splitter ---
+        # --- Grid + bottom tables in a vertical splitter ---
+        self._grid = OfficeGridView()
+
         bottom_splitter = QSplitter(Qt.Horizontal)
 
         block_frame = QWidget()
@@ -88,13 +110,23 @@ class VisualizeTab(QWidget):
         bottom_splitter.addWidget(team_frame)
 
         bottom_splitter.setSizes([400, 400])
-        layout.addWidget(bottom_splitter)
+
+        # Wrap grid + bottom tables in a vertical splitter for resizable panes
+        main_splitter = QSplitter(Qt.Vertical)
+        main_splitter.addWidget(self._grid)
+        main_splitter.addWidget(bottom_splitter)
+        main_splitter.setSizes([500, 180])
+        main_splitter.setChildrenCollapsible(False)
+        layout.addWidget(main_splitter, stretch=1)
 
         # Connect signals
         self._solution_combo.currentIndexChanged.connect(self._on_combo_changed)
         self._day_selector.day_changed.connect(self._on_day_changed)
         self._save_btn.clicked.connect(self._on_save)
         self._grid.team_moved.connect(self._on_team_moved)
+        self._zoom_in_btn.clicked.connect(self._grid.zoom_in)
+        self._zoom_out_btn.clicked.connect(self._grid.zoom_out)
+        self._zoom_reset_btn.clicked.connect(self._grid.zoom_reset)
 
         state.solution_list_changed.connect(self._refresh_combo)
         state.active_solution_changed.connect(self._on_active_solution_changed)
@@ -255,7 +287,6 @@ class VisualizeTab(QWidget):
         t.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         t.setEditTriggers(QTableWidget.NoEditTriggers)
         t.setAlternatingRowColors(True)
-        t.setMaximumHeight(180)
         return t
 
     def _make_team_table(self) -> QTableWidget:
@@ -265,7 +296,6 @@ class VisualizeTab(QWidget):
         t.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         t.setEditTriggers(QTableWidget.NoEditTriggers)
         t.setAlternatingRowColors(True)
-        t.setMaximumHeight(180)
         return t
 
     def _populate_block_table(self, solution):

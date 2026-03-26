@@ -87,3 +87,4 @@ The cover constraint (constraint 3) says two specific days A, B must exist such 
 - `build.spec` — PyInstaller spec; bundles `data/` files, excludes streamlit/pandas.
 - Output: `dist/SeatingOptimizer.app` (~88MB). Drag to `/Applications` to install.
 - Bundled data files land at `Contents/Resources/data/`; `sys._MEIPASS` points to `Contents/Resources/`.
+- **After any code change, the app must be rebuilt** with `.venv/bin/pyinstaller build.spec --clean -y` before the changes are visible in `dist/SeatingOptimizer` or `dist/SeatingOptimizer.app`. Use `.venv/bin/python -m gui.main` for rapid iteration without rebuilding.
