@@ -53,7 +53,7 @@ The app is split into a core logic package (`seating_optimizer/`) and a PySide6 
 Central owner of all runtime state. Signals: `solution_list_changed`, `active_solution_changed(object)`, `active_day_changed(int)`. Solutions dir: `~/Library/Application Support/Seating Optimizer/solutions/` (via `QStandardPaths`). Also checks local `solutions/` for backwards compat. File paths persisted via `QSettings("SeatingOptimizer", "SeatingOptimizer")`.
 
 #### `gui/main_window.py` — `MainWindow(QMainWindow)`
-Three-tab layout (Solve / Visualize / Update). Connects `currentChanged` to trigger `_fit_in_view()` when Visualize tab becomes active. File menu opens office map / teams JSON. Status bar shows block/team/solution counts.
+Four-tab layout (Solve / Visualize / Update / Manual). Connects `currentChanged` to trigger `_fit_in_view()` when Visualize or Manual tab becomes active. File menu opens office map / teams JSON. Status bar shows block/team/solution counts.
 
 #### `gui/tabs/solve_tab.py` — `SolveTab`
 Settings panel (file paths, n_solutions, max_iters, seed) + Run Solver button. Spawns `SolverThread`; progress bar connected to `progress` signal. Results list with Save / Delete / Visualize buttons. Schedule table below.
@@ -64,11 +64,22 @@ Solution combo + day selector (1–4 toggle buttons) + metrics bar + dept legend
 #### `gui/tabs/update_tab.py` — `UpdateTab`
 Load base solution + new teams JSON → diff table (red = violated, yellow = changed) → `UpdaterThread` → before/after read-only grids.
 
-#### `gui/widgets/office_grid.py` — `OfficeGridView(QGraphicsView)`
-Interactive office grid. `load(solution, day, blocks, teams_by_id, dept_color_fn)` builds a `QGraphicsScene` with `BlockItem` objects. Grid dimensions computed dynamically: `max(b.row)+1` × `max(b.col)+1`. **Important**: `fitInView` uses `QTimer.singleShot(0, ...)` everywhere (in `_rebuild_scene`, `showEvent`, `resizeEvent`) — the viewport size is not reliable until the event loop runs. `setAcceptDrops(True)` must be set on both the view and each `BlockItem` for drag events to fire.
+#### `gui/tabs/manual_tab.py` — `ManualTab`
+Fully manual seating assignment. Left panel: sortable team list (by dept/size/name) with drag support and assignment status. Right panel: `_ManualGridView` (subclass of `OfficeGridView`) with day selector. Key interactions:
+- **Drag team from list → block**: assigns team to that block on the current day.
+- **Drag team chip from block → list**: removes assignment for the current day.
+- **Click team in list**: highlights all blocks green (fits) or red (over capacity) for that team/day.
+- **Right-click team chip in block**: context menu to assign to same block on another day (green/red dot per day) or remove from current day.
+- Over-capacity drops are allowed (red highlight + constraint warning).
+- Live constraint banner flags: unassigned teams, partial assignments (only 1 day), cover constraint violations, capacity overflows.
+- Cover pair picker (6 combos). New button resets to fresh empty solution (with confirmation). Load/Save buttons for JSON round-trip.
+- `_ManualGridView` owns `_allow_oversize=True`, `_highlighted_team_id`, and overrides `_on_team_dropped` / `_rebuild_scene`. Right-click removes via `_remove_from_day()` which emits `team_removed_from_day(team_id, day)` back to `ManualTab`.
 
 #### `gui/widgets/block_item.py` — `BlockItem(QGraphicsObject)`
-Paints one seating block: rounded rect, block ID, capacity bar (green/orange/red), team chips. Initiates drag via `QDrag` with MIME `application/x-team-chip` = `{"team_id": "...", "from_block_id": "..."}`. Validates capacity in `dragEnterEvent` (green/red border highlight). Emits `team_dropped(team_id, from_block_id, to_block_id)` on valid drop. **Important**: `QGraphicsItem.ItemIsDropEnabled` flag does not exist in PySide6 6.10 — use `setAcceptDrops(True)` only.
+Paints one seating block: rounded rect, block ID, capacity bar (green/orange/red), team chips. Initiates drag via `QDrag` with MIME `application/x-team-chip` = `{"team_id": "...", "from_block_id": "..."}`. Validates capacity in `dragEnterEvent` (green/red border highlight); when `allow_oversize=True` (Manual tab), over-capacity drops are accepted with red highlight. Emits `team_dropped(team_id, from_block_id, to_block_id)` on drop; emits `team_right_clicked(team_id, block_id)` on right-click. Supports `set_external_highlight(color)` for persistent selection highlights (separate from drag-hover `_highlight`). **Important**: `QGraphicsItem.ItemIsDropEnabled` flag does not exist in PySide6 6.10 — use `setAcceptDrops(True)` only.
+
+#### `gui/widgets/office_grid.py` — `OfficeGridView(QGraphicsView)`
+Interactive office grid. `load(solution, day, blocks, teams_by_id, dept_color_fn)` builds a `QGraphicsScene` with `BlockItem` objects. Grid dimensions computed dynamically: `max(b.row)+1` × `max(b.col)+1`. **Important**: `fitInView` uses `QTimer.singleShot(0, ...)` everywhere (in `_rebuild_scene`, `showEvent`, `resizeEvent`) — the viewport size is not reliable until the event loop runs. `setAcceptDrops(True)` must be set on both the view and each `BlockItem` for drag events to fire. `highlight_for_team(team_id, day)` / `clear_highlights()` set external highlights on all block items (used by Manual tab for selection feedback). `_allow_oversize` flag (default `False`) is passed to `BlockItem` to allow over-capacity drops.
 
 #### `gui/threads/`
 - `SolverThread(QThread)` — wraps `Solver.solve(progress_callback)`; signals: `progress(int, int)`, `finished(list)`, `error(str)`.

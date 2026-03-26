@@ -18,23 +18,38 @@ _BAR_MARGIN_TOP = 4
 
 
 class BlockItem(QGraphicsObject):
-    team_dropped = Signal(str, str, str)  # team_id, from_block_id, to_block_id
+    team_dropped = Signal(str, str, str)       # team_id, from_block_id, to_block_id
+    team_right_clicked = Signal(str, str)       # team_id, block_id
 
-    def __init__(self, block, teams_by_id: dict, dept_color_fn, read_only: bool = False):
+    def __init__(
+        self,
+        block,
+        teams_by_id: dict,
+        dept_color_fn,
+        read_only: bool = False,
+        allow_oversize: bool = False,
+    ):
         super().__init__()
         self._block = block
         self._teams_by_id = teams_by_id
         self._dept_color_fn = dept_color_fn
         self._read_only = read_only
+        self._allow_oversize = allow_oversize
         self._team_ids: list[str] = []
         self._chip_rects: list[tuple[QRectF, str]] = []  # (rect, team_id)
-        self._highlight: str | None = None  # "green" | "red" | None
+        self._highlight: str | None = None           # drag-hover highlight
+        self._external_highlight: str | None = None  # externally set (selection)
         self._drag_start: QPointF | None = None
         self._drag_team_id: str | None = None
 
         self.setAcceptDrops(True)
         if not read_only:
             self.setCursor(QCursor(Qt.OpenHandCursor))
+
+    def set_external_highlight(self, color: str | None):
+        """Set a persistent highlight (green/red/None) from outside, e.g. team selection."""
+        self._external_highlight = color
+        self.update()
 
     def set_teams(self, team_ids: list[str]):
         self._team_ids = list(team_ids)
@@ -62,10 +77,12 @@ class BlockItem(QGraphicsObject):
         bg_color = QColor("#ffffff")
         painter.setBrush(QBrush(bg_color))
 
-        if self._highlight == "green":
+        # Drag-hover highlight takes priority over external (selection) highlight
+        effective_highlight = self._highlight or self._external_highlight
+        if effective_highlight == "green":
             border_color = QColor("#27AE60")
             border_width = 2.5
-        elif self._highlight == "red":
+        elif effective_highlight == "red":
             border_color = QColor("#D0021B")
             border_width = 2.5
         else:
@@ -178,6 +195,12 @@ class BlockItem(QGraphicsObject):
         if self._read_only:
             event.ignore()
             return
+        if event.button() == Qt.RightButton:
+            team_id = self._team_at_pos(event.pos())
+            if team_id:
+                self.team_right_clicked.emit(team_id, self._block.block_id)
+                event.accept()
+                return
         if event.button() == Qt.LeftButton:
             team_id = self._team_at_pos(event.pos())
             if team_id:
@@ -244,13 +267,12 @@ class BlockItem(QGraphicsObject):
                 if team_id in self._team_ids:
                     current_used -= team.size
 
-                if current_used + team.size <= self._block.capacity:
-                    self._highlight = "green"
-                    self.update()
+                fits = current_used + team.size <= self._block.capacity
+                self._highlight = "green" if fits else "red"
+                self.update()
+                if fits or self._allow_oversize:
                     event.accept()
                 else:
-                    self._highlight = "red"
-                    self.update()
                     event.ignore()
             except Exception:
                 event.ignore()

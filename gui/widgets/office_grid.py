@@ -30,6 +30,7 @@ class OfficeGridView(QGraphicsView):
         self._dept_color_fn = None
         self._block_items: dict[str, BlockItem] = {}
         self._read_only = False
+        self._allow_oversize = False
         self._user_zoomed = False
         self._current_scale = 1.0
 
@@ -110,6 +111,7 @@ class OfficeGridView(QGraphicsView):
                         self._teams_by_id,
                         self._dept_color_fn or (lambda d: "#888888"),
                         read_only=self._read_only,
+                        allow_oversize=self._allow_oversize,
                     )
                     item.setPos(x, y)
                     team_ids = day_view.get(block.block_id, [])
@@ -137,6 +139,33 @@ class OfficeGridView(QGraphicsView):
             # Track resulting scale so zoom_in/out starts from the right baseline
             t = self.transform()
             self._current_scale = t.m11()
+
+    def highlight_for_team(self, team_id: str, day: int):
+        """Color every block green (fits) or red (over capacity) for this team/day."""
+        team = self._teams_by_id.get(team_id)
+        if team is None:
+            self.clear_highlights()
+            return
+        day_view = self._solution.get_day_view(day) if self._solution else {}
+        for block_id, item in self._block_items.items():
+            block = self._blocks_by_id.get(block_id)
+            if block is None:
+                continue
+            occupied = sum(
+                self._teams_by_id[tid].size
+                for tid in day_view.get(block_id, [])
+                if tid in self._teams_by_id
+            )
+            # Don't double-count if team is already in this block
+            if team_id in day_view.get(block_id, []):
+                occupied -= team.size
+            fits = (occupied + team.size) <= block.capacity
+            item.set_external_highlight("green" if fits else "red")
+
+    def clear_highlights(self):
+        """Remove all external highlights."""
+        for item in self._block_items.values():
+            item.set_external_highlight(None)
 
     def _on_team_dropped(self, team_id: str, from_block_id: str, to_block_id: str):
         if self._solution is None:
