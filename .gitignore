@@ -1,5 +1,8 @@
 .venv/
 .claude/
 solutions/
+build/
+dist/
 
 *.xlsx
+*.DS_Store
