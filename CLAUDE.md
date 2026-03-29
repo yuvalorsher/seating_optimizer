@@ -63,7 +63,10 @@ Four-tab layout (Solve / Visualize / Update / Manual). Connects `currentChanged`
 Settings panel (office map path, employees CSV path, n_solutions, max_iters, seed) + Run Solver button. Spawns `SolverThread`; progress bar connected to `progress` signal. Results list with Save / Delete / Visualize buttons. Schedule table shows: Group, Dept(s), Size, Day 1 → block(s), Day 2 → block(s), Single Block.
 
 #### `gui/tabs/visualize_tab.py` — `VisualizeTab`
-Solution combo + day selector (1–4 toggle buttons) + metrics bar (Score, Compactness, Consistency, Cover Days, ID) + group legend + `OfficeGridView` + block/group summary tables. **Important**: `_select_solution_in_combo()` holds `_refreshing_combo` guard to prevent `currentIndexChanged` re-entrancy. All updates go through `_display_solution()` — never re-emit signals from within update handlers.
+Solution combo + day selector (1–4 toggle buttons) + metrics bar (Score, Compactness, Consistency, Cover Days, ID) + group legend + `OfficeGridView` + block/group summary tables + **Export PDF** button. **Important**: `_select_solution_in_combo()` holds `_refreshing_combo` guard to prevent `currentIndexChanged` re-entrancy. All updates go through `_display_solution()` — never re-emit signals from within update handlers.
+
+#### `gui/pdf_exporter.py` — `export_pdf()`
+Exports the active solution to a 5-page A4 PDF. Pages 1–4: one per day, showing the office grid (rendered via `QGraphicsScene` with read-only `BlockItem`s) with a title and group count. Page 5: solution summary (ID, score, compactness, consistency, cover days), a department meeting days table (each dept's common day derived from the intersection of its groups' day assignments), and the full group schedule table. Uses `QPdfWriter` at 96 DPI — critical: do not change this. The default 1200 DPI causes `BlockItem` fonts to inflate ~9× relative to cell size because Qt scales point-size fonts with the painter world transform during `scene.render()`.
 
 #### `gui/tabs/update_tab.py` — `UpdateTab`
 Placeholder — not yet updated for the employee/group model.

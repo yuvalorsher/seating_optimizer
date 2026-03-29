@@ -5,12 +5,13 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QFrame,
+    QHeaderView, QMessageBox, QFrame, QFileDialog,
 )
 
 from seating_optimizer import persistence
 
 from gui.app_state import AppState
+from gui.pdf_exporter import export_pdf
 from gui.widgets.day_selector import DaySelectorWidget
 from gui.widgets.metrics_bar import MetricsBarWidget
 from gui.widgets.office_grid import OfficeGridView
@@ -41,6 +42,17 @@ class VisualizeTab(QWidget):
         top_bar.addWidget(self._day_selector)
 
         top_bar.addSpacing(16)
+        self._export_btn = QPushButton("Export PDF")
+        self._export_btn.setEnabled(False)
+        self._export_btn.setStyleSheet(
+            "QPushButton { background: #27AE60; color: white; font-weight: bold; "
+            "padding: 6px 14px; border-radius: 4px; }"
+            "QPushButton:hover { background: #1e8449; }"
+            "QPushButton:disabled { background: #aaa; }"
+        )
+        top_bar.addWidget(self._export_btn)
+
+        top_bar.addSpacing(8)
         self._save_btn = QPushButton("Save Changes")
         self._save_btn.setEnabled(False)
         self._save_btn.setStyleSheet(
@@ -118,6 +130,7 @@ class VisualizeTab(QWidget):
         # Connect signals
         self._solution_combo.currentIndexChanged.connect(self._on_combo_changed)
         self._day_selector.day_changed.connect(self._on_day_changed)
+        self._export_btn.clicked.connect(self._on_export_pdf)
         self._save_btn.clicked.connect(self._on_save)
         self._grid.team_moved.connect(self._on_group_moved)
         self._zoom_in_btn.clicked.connect(self._grid.zoom_in)
@@ -181,6 +194,7 @@ class VisualizeTab(QWidget):
         if solution is None:
             self._metrics_bar.update_metrics(None)
             self._grid._scene.clear()
+            self._export_btn.setEnabled(False)
             return
         self._select_solution_in_combo(solution)
         self._display_solution(solution)
@@ -193,6 +207,7 @@ class VisualizeTab(QWidget):
         self._populate_group_table(solution)
         self._modified = False
         self._save_btn.setEnabled(False)
+        self._export_btn.setEnabled(True)
 
     # ------------------------------------------------------------------ day
 
@@ -267,6 +282,33 @@ class VisualizeTab(QWidget):
             QMessageBox.information(self, "Saved", f"Solution {sol.solution_id} saved.")
         except Exception as exc:
             QMessageBox.warning(self, "Save Error", f"Failed to save:\n{exc}")
+
+    # ------------------------------------------------------------------ export
+
+    def _on_export_pdf(self):
+        sol = self._state.active_solution
+        if sol is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export PDF",
+            f"seating_{sol.solution_id[:8]}.pdf",
+            "PDF Files (*.pdf)",
+        )
+        if not path:
+            return
+        try:
+            export_pdf(
+                path,
+                sol,
+                self._state.blocks,
+                self._state.groups_by_id,
+                self._state.employees_by_group,
+                self._state.group_color,
+            )
+            QMessageBox.information(self, "Exported", f"PDF saved to:\n{path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export Error", f"Failed to export PDF:\n{exc}")
 
     # ------------------------------------------------------------------ tables
 
