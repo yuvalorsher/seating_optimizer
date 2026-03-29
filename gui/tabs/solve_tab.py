@@ -58,7 +58,7 @@ class SolveTab(QWidget):
         # Number of solutions
         left_layout.addWidget(QLabel("Solutions to find:"))
         self._n_solutions_spin = QSpinBox()
-        self._n_solutions_spin.setRange(1, 20)
+        self._n_solutions_spin.setRange(1, 9999)
         self._n_solutions_spin.setValue(5)
         left_layout.addWidget(self._n_solutions_spin)
 
