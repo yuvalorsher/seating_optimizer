@@ -33,17 +33,20 @@ The app is split into a core logic package (`seating_optimizer/`) and a PySide6 
 **Data flow**: `loader.py` → `models.py` → `solver.py` → `persistence.py`
 
 - `models.py` — Frozen dataclasses `Block`, `Employee`, `Group`; mutable `Solution`, `GroupDayAssignment`, `GroupBlockAssignment`. All modules share these types.
-- `loader.py` — `load_office_map()` parses the CSV into `Block` objects (non-zero cells only, IDs B0–BN in row-major order). `load_employees()` parses the employee CSV (columns: Display name, Group, Department). `get_groups()` aggregates employees into `Group` objects. `get_employees_by_group()` returns `{group_id: [Employee, ...]}`.
+- `loader.py` — `load_office_map()` parses the CSV into `Block` objects (non-zero cells only, IDs B0–BN in row-major order). `load_employees()` parses the employee CSV (columns: Display name, Group, Department). `get_groups()` aggregates employees into `Group` objects. `get_employees_by_group()` returns `{group_id: [Employee, ...]}`. `load_cold_seats(path)` parses a `Group,Block` CSV into `{group_id: block_id}`.
 - `constraints.py` — Hard constraint checkers. Key functions:
   - `valid_day_combos_for_cover_pair(cover_pair)` — 5 valid 2-day combos for a cover pair.
   - `all_dept_day_assignments(cover_pair, depts)` — enumerates all 2^N ways to assign a common day (from cover pair) to each dept.
   - `check_dept_overlap_constraint(dept_map, day_assignments)` — every pair of groups in the same dept must share ≥1 day.
   - `check_column_distance_constraint(block_assignments, blocks_by_id)` — group members in different blocks must be ≤4 columns apart.
+  - `check_cold_seats_constraint(block_assignments, cold_seats)` — groups with a designated block must only appear in that block.
 - `scorer.py` — `compute_total_score()` = 0.6 × compactness + 0.4 × consistency. Compactness = fraction of (group, day) pairs where the group fits in a single block. Consistency = fraction of groups with the same block(s) on both their days.
 - `solver.py` — Three-phase pipeline run inside `Solver.solve()`:
-  1. **`DayAssigner`** — assigns day combos to groups using a **dept-common-day strategy**: each dept gets a common day from the cover pair, and every group with members in that dept must attend it. This satisfies the dept-overlap constraint (rule d) and cover constraint by construction. Groups spanning two depts have both mandatory days fixed; single-dept groups pick their second day freely. The solver enumerates all 2^N_depts dept-day combinations.
-  2. **`SeatingAssigner`** — per-day bin-packing by group: tries to fit each group in a single block (tightest fit); if too large, splits across blocks within the same column group (column distance ≤ 4). `_compute_column_groups()` pre-computes which blocks are within 4 columns of each other.
-  3. **`ConsistencyReconciler`** — post-processes to maximise single-block groups that share the same block on both days. Skips multi-block groups.
+  1. **`DayAssigner`** — assigns day combos to groups using a **dept-common-day strategy**: each dept gets a common day from the cover pair, and every group with members in that dept must attend it. This satisfies the dept-overlap constraint (rule d) and cover constraint by construction. Groups spanning two depts have both mandatory days fixed; single-dept groups pick their second day freely. The solver enumerates all 2^N_depts dept-day combinations. Accepts `mandatory_overrides: dict` — `{group_id: [allowed_combos]}` — for the triangle strategy (see Tier-2 below).
+  2. **`SeatingAssigner`** — per-day bin-packing by group: tries to fit each group in a single block (tightest fit); if too large, splits across blocks within the same column group (column distance ≤ 4). `_compute_column_groups()` pre-computes which blocks are within 4 columns of each other. Cold-seated groups are pinned to their required block; if it has insufficient capacity the group fails.
+  3. **`ConsistencyReconciler`** — post-processes to maximise single-block groups that share the same block on both days. Skips multi-block groups and cold-seated groups.
+  - **Tier-1 strategy**: single common day per dept × all cover pairs. Works when each dept fits within total office capacity.
+  - **Tier-2 strategy** (fallback): triangle partitioning for all depts with ≥2 groups. Three sub-batches on day combos (X,Y), (X,Z), (Y,Z) guarantee pairwise overlap; max load = 2/3 × dept_total. Handles depts up to 1.5× capacity. `_valid_triangles_for_cover_pair()` and `_enumerate_triangle_configs()` support this.
 - `updater.py` — `SolutionUpdater(blocks, groups_by_id)` — updates an existing solution when group sizes change, with a 3-tier fallback strategy:
   1. **Minimal repack** — keep same day assignments; pin unchanged groups in their existing blocks; re-seat only changed groups in remaining space.
   2. **Same cover pair** — if capacity fails, re-run full day + seat assignment using the original cover pair, preserving unchanged groups' day assignments wherever constraints allow.
@@ -57,13 +60,13 @@ The app is split into a core logic package (`seating_optimizer/`) and a PySide6 
 **Data flow**: `AppState` (shared state + Qt signals) → tab widgets → `OfficeGridView` (interactive grid).
 
 #### `gui/app_state.py` — `AppState(QObject)`
-Central owner of all runtime state. Holds `blocks`, `employees`, `groups`, `groups_by_id`, `employees_by_group`, `dept_map`. Signals: `solution_list_changed`, `active_solution_changed(object)`, `active_day_changed(int)`. Solutions dir: `~/Library/Application Support/Seating Optimizer/solutions/` (via `QStandardPaths`). Also checks local `solutions/` for backwards compat. File paths persisted via `QSettings("SeatingOptimizer", "SeatingOptimizer")` — keys: `office_map_path`, `employees_path`. `group_color(group_id)` returns a stable color hex per group (hash-based from `DEPT_COLORS` palette).
+Central owner of all runtime state. Holds `blocks`, `employees`, `groups`, `groups_by_id`, `employees_by_group`, `dept_map`, `cold_seats`. Signals: `solution_list_changed`, `active_solution_changed(object)`, `active_day_changed(int)`. Solutions dir: `~/Library/Application Support/Seating Optimizer/solutions/` (via `QStandardPaths`). Also checks local `solutions/` for backwards compat. File paths persisted via `QSettings("SeatingOptimizer", "SeatingOptimizer")` — keys: `office_map_path`, `employees_path`, `cold_seats_path`. `group_color(group_id)` returns a stable color hex per group (hash-based from `DEPT_COLORS` palette).
 
 #### `gui/main_window.py` — `MainWindow(QMainWindow)`
 Four-tab layout (Solve / Visualize / Update / Manual). Connects `currentChanged` to trigger `_fit_in_view()` when Visualize tab becomes active. File menu opens office map / employees CSV. Status bar shows block/group/employee/solution counts.
 
 #### `gui/tabs/solve_tab.py` — `SolveTab`
-Settings panel (office map path, employees CSV path, n_solutions, max_iters, seed) + Run Solver button. Spawns `SolverThread`; progress bar connected to `progress` signal. Results list with Save / Delete / Visualize buttons. Schedule table shows: Group, Dept(s), Size, Day 1 → block(s), Day 2 → block(s), Single Block.
+Settings panel (office map path, employees CSV path, cold seats CSV path, n_solutions, max_iters, seed) + Run Solver button. Spawns `SolverThread`; progress bar connected to `progress` signal. Results list with Save / Delete / Visualize buttons. Schedule table shows: Group, Dept(s), Size, Day 1 → block(s), Day 2 → block(s), Single Block.
 
 #### `gui/tabs/visualize_tab.py` — `VisualizeTab`
 Solution combo + day selector (1–4 toggle buttons) + metrics bar (Score, Compactness, Consistency, Cover Days, ID) + group legend + `OfficeGridView` + block/group summary tables + **Export PDF** button. **Important**: `_select_solution_in_combo()` holds `_refreshing_combo` guard to prevent `currentIndexChanged` re-entrancy. All updates go through `_display_solution()` — never re-emit signals from within update handlers.
@@ -94,12 +97,14 @@ Interactive office grid. `load(solution, day, blocks, groups_by_id, group_color_
 | a | Each employee attends exactly 2 days | Group gets exactly 2-day combo |
 | b | Cover pair: 2 days covering everyone | All common days come from cover pair → by construction |
 | c | Same group → same days | Group is the atomic scheduling unit |
-| d | Every dept pair shares ≥1 day | Dept-common-day strategy: all groups in dept D attend `cd_D` |
+| d | Every dept pair shares ≥1 day | Dept-common-day strategy (Tier-1) or triangle partitioning (Tier-2 for large depts) |
 | e | Same-group employees ≤4 columns apart | SeatingAssigner only overflows within column groups |
+| f | Cold-seated groups use their designated block | SeatingAssigner pins group to required block; ConsistencyReconciler skips them |
 
 ### Data files
 - `data/office_map.csv` — Grid CSV; non-zero cells are seating blocks, parsed row-major into Block objects.
 - `data/Employees list for seating with fake department.csv` — Employee list; columns: Start date, Display name, Group, Team, Reports to, Department. Default input file.
+- `data/cold_seats.csv` — Optional; columns: `Group`, `Block`. Maps group names to their required block ID. Bundled default; user can override via the Solve tab file picker.
 - `solutions/` — Legacy output (auto-loaded by GUI for backwards compat).
 - `~/Library/Application Support/Seating Optimizer/solutions/` — Primary solutions dir when running as .app.
 

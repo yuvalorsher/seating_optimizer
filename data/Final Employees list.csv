@@ -1,0 +1,146 @@
+Start date,Display name,Group,Team,Reports to,Department,
+28/12/2025,Miriam Guendelman,AI,Clinical Manager,Michael Zuckerman,R&D,v
+10/12/2025,Itai Katz,AI,Clinical Manager,Michael Zuckerman,R&D,v
+10/9/2025,Mica Rubinson,AI,Data Science,Shlomit Labin,R&D,v
+1/9/2025,Eyal Regev,AI,Data Science,Mica Rubinson,R&D,v
+29/6/2025,Sharon Fogel,AI,Data Science,Mica Rubinson,R&D,v
+28/1/2024,Omri Pinhas,AI,Data Science,Mica Rubinson,R&D,v
+24/4/2022,Roei Magen,AI,Clinical Manager,Michael Zuckerman,R&D,v
+19/9/2021,Yaniv Refaelovich,AI,Data Science,Mica Rubinson,R&D,v
+1/9/2021,Asaf Wizman-Oren,AI,Clinical Manager,Michael Zuckerman,R&D,v
+13/9/2020,Zach Avraham,AI,Data Science,Mica Rubinson,R&D,v
+8/2/2026,Avihai Binshtok,Data,Acquisition,Hagar Shwartz,R&D,v
+25/1/2026,Omer Freeman,Data,Acquisition,Gilad Guralnik,R&D,v
+10/8/2025,Erez Kaufman,Data,Acquisition,Gilad Guralnik,R&D,v
+9/7/2025,Tomer Stolero,Data,Acquisition,Gilad Guralnik,R&D,v
+4/6/2025,Guy Zaken,Data,Acquisition,Gilad Guralnik,R&D,v
+5/1/2025,Meirav Shenhar,Data,Acquisition,Gilad Guralnik,R&D,v
+18/12/2024,Chen Arbel,Data,Acquisition,Hagar Shwartz,R&D,v
+15/9/2024,Nir Cohen,Data,Acquisition,Gilad Guralnik,R&D,v
+13/12/2022,Gilad Guralnik,Data,Acquisition,Roni Moshitzky,R&D,v
+4/3/2026,Dolev Oz,Data,Processing,Hagar Shwartz,R&D,v
+7/1/2026,Boaz Leshman,Data,Processing,Yogev Mizrahi,R&D,v
+12/11/2025,Eyal Miller,Data,Processing,Yogev Mizrahi,R&D,v
+9/11/2025,Nir Patel,Data,Processing,Yogev Mizrahi,R&D,v
+8/5/2025,Jonathan Wesfield,Data,Processing,Yogev Mizrahi,R&D,v
+21/1/2025,Yogev Mizrahi,Data,Processing,Roni Moshitzky,R&D,v
+17/11/2024,Yarden Lev,Data,Processing,Yogev Mizrahi,R&D,v
+20/8/2023,Hagar Shwartz,Data,Processing,Neta Avivi,R&D,v
+17/9/2025,Netanel Greifner,Data,Processing,Ronen Gordon,R&D,v
+30/11/2025,Assaf Segev,Data,Transformation,Yogev Mizrahi,R&D,v
+15/9/2024,Tom Lind,Data,Transformation,Yogev Mizrahi,R&D,v
+17/3/2024,Gal Bien,Data,Transformation,Yogev Mizrahi,R&D,v
+21/5/2025,Or Eivan,Data Research,Data Research,Raviv Schaffer,R&D,v
+5/4/2026,Naama Shemesh,Data Research,Data Research,Raviv Schaffer,R&D,v
+15/2/2026,Alma Salamon,Data Research,Data Research,Raviv Schaffer,R&D,v
+11/1/2026,Yuval Amir,Data Research,Data Research,Raviv Schaffer,R&D,v
+20/12/2023,Ofir Barkay,Data Research,Data Research,Raviv Schaffer,R&D,v
+21/8/2022,Raviv Schaffer,Data Research,Data Research,Shlomit Labin,R&D,v
+18/2/2026,Adi Rozental Marino,Development,Development,Roni Moshitzky,R&D,v
+7/12/2025,Oren Hollander,Development,Development,Roni Moshitzky,R&D,v
+23/2/2026,Shlomi Yaniv,Finance & Ops,Finance & Ops,Hila Dalal Shemesh,Business,v
+1/12/2025,Oriya Roitlender,Finance & Ops,Finance & Ops,Hila Dalal Shemesh,Business,v
+2/11/2025,Angelika Kobaivanov,Finance & Ops,Finance & Ops,Yael Efroni,Business,v
+1/5/2024,Yana Sella,Finance & Ops,Finance & Ops,Yael Efroni,Business,v
+29/6/2025,Omer Zolty,Infra,Core Services,Ben Ben-Zour,R&D,v
+1/2/2024,Ben Ben-Zour,Infra,Core Services,Tal Shachar,R&D,v
+1/3/2023,Gal Shen,Infra,Core Services,Ben Ben-Zour,R&D,v
+24/5/2020,Aviv Dolev,Infra,Core Services,Ben Ben-Zour,R&D,v
+18/5/2025,Yehonatan Stein,Infra,DevOps,Tal Shachar,R&D,v
+14/4/2024,Aviel Buskila,Infra,DevOps,Tal Shachar,R&D,v
+31/10/2022,Tal Shachar,Infra,DevOps,Roni Moshitzky,R&D,v
+15/4/2026,Yarden Fishler,Infra,Core Services,Ben Ben-Zour,R&D,v
+12/4/2026,Shoval Gerama,Infra,DevOps,Aviel Buskila,R&D,v
+16/11/2025,Raphael Cohen,Infra,ML,Eshel Doron,R&D,v
+19/10/2025,Eshel Doron,Infra,ML,Tal Shachar,R&D,v
+11/5/2025,Asif Kagan,Infra,ML,Eshel Doron,R&D,v
+23/12/2025,Itamar Ben Nun,Legal,Legal,Tali Meroz,Business,v
+17/12/2025,Kayam Boccara,Legal,Legal,Tali Meroz,Business,v
+1/9/2025,Roni Gal On,Legal,Legal,Tali Meroz,Business,v
+10/12/2020,Tamir Shimron,Marketing,Marketing Demand,Ronen Lavi,Business,v
+19/6/2022,Raviv Vissel,Marketing,Marketing Demand,Andrew Behan,Business,v
+6/3/2023,Liron Moskovich,Marketing,Marketing Demand,Thaddeus Bowie,Business,v
+23/2/2026,Danielle Krieger,Marketing,Marketing Demand,Dana Naim,Business,v
+2/3/2025,Guido Senderowitsch,Marketing,Marketing Demand,Sam Benzaqen,Business,v
+12/8/2024,Dalia Jude,Marketing,Marketing Demand,Dana Naim,Business,v
+17/4/2024,Shahaf Rilsky,Marketing,Marketing Demand,Dana Naim,Business,v
+11/6/2023,Tal Kra-Oz,Marketing,Marketing Demand,Dana Naim,Business,v
+1/5/2023,Dana Naim,Marketing,Marketing Demand,Anne Amario,Business,v
+11/3/2021,Sam Benzaqen,Marketing,Marketing Demand,Dana Naim,Business,v
+2/7/2025,Adi Guindy,Marketing,Marketing Strategy,Noam Keesom,Business,v
+24/1/2024,Danika Shtukin,Marketing,Marketing Strategy,Noam Keesom,Business,v
+3/7/2022,Noam Keesom,Marketing,Marketing Strategy,Anne Amario,Business,v
+15/9/2025,Guy Hakun,Marketing,Technical Support Engineer,Nimrod Shany,Business,v
+15/9/2025,Shaked Chen,Marketing,Technical Support Engineer,Nimrod Shany,Business,v
+24/3/2025,Inbar Alroy,Marketing,Technical Support Engineer,Jack Leduc,Business,v
+3/12/2023,Nimrod Shany,Marketing,Technical Support Engineer,Jack Leduc,Business,v
+7/12/2025,Noy Shaked,Point of Care,Ambient,Noam Kedar,R&D,v
+26/10/2025,Yoav David,Point of Care,Ambient,Noam Kedar,R&D,v
+4/6/2025,Amit Ovadia,Point of Care,Ambient,Noam Kedar,R&D,v
+10/1/2022,Noam Kedar,Point of Care,Ambient,Boaz Nussbaum,R&D,v
+7/2/2021,Adi Gilad,Point of Care,Ambient,Neta Avivi,R&D,v
+1/1/2026,Zohar Golan,Point of Care,DX Application,Rachel Richter,R&D,v
+7/12/2025,Mor Sharfi,Point of Care,DX Application,Rachel Richter,R&D,v
+21/5/2025,Guy Klinger,Point of Care,DX Application,Rachel Richter,R&D,v
+2/2/2025,Yuval Padova,Point of Care,DX Application,Rachel Richter,R&D,v
+2/6/2024,Tal Hillel,Point of Care,DX Application,Rachel Richter,R&D,v
+26/5/2024,Ori Arazi,Point of Care,DX Application,Rachel Richter,R&D,v
+1/9/2021,Inbal Dekel,Point of Care,DX Application,Moti Arzuan,R&D,v
+29/8/2021,Rachel Richter,Point of Care,DX Application,Boaz Nussbaum,R&D,v
+6/10/2024,Moti Arzuan,Point of Care,DX Application,Ronen Gordon,R&D,v
+14/7/2024,Sivan Sagi,Point of Care,DX Application,Neta Avivi,R&D,v
+2/11/2025,Itay Golan,Point of Care,DX Engine,David Lavy,R&D,v
+18/8/2025,Raz Ramon,Point of Care,DX Engine,David Lavy,R&D,v
+6/4/2025,Amit Haim,Point of Care,DX Engine,David Lavy,R&D,v
+4/9/2022,Boaz Nussbaum,Point of Care,DX Engine,Roni Moshitzky,R&D,v
+1/6/2019,David Lavy,Point of Care,DX Engine,Boaz Nussbaum,R&D,v
+4/1/2026,Emanuel Melaku,Point of Care,DX Application,Moti Arzuan,R&D,v
+1/1/2025,Noa Elbaz,Product Design,Product Design,Reut Alon,R&D,v
+16/3/2026,Shir Merav,Population Health,Analytics,Yael Lerech,R&D,v
+16/3/2026,Tomer Dayan,Population Health,Analytics,Yael Lerech,R&D,v
+26/11/2025,Ohad Savir,Population Health,Analytics,Noa Bar Hillel Shushan,R&D,v
+1/1/2025,Chen Bar-On,Population Health,Analytics,Yael Lerech,R&D,v
+1/12/2024,Itamar Bar-Lev,Population Health,Analytics,Yael Lerech,R&D,v
+22/1/2023,Yael Lerech,Population Health,Analytics,Ron Gross,R&D,v
+29/12/2019,Ron Gross,Population Health,Analytics,Roni Moshitzky,R&D,v
+12/1/2025,Eric Shtivelman,Data Research,Data Research,Raviv Schaffer,R&D,v
+14/4/2024,Ofri Amsalem,Data Research,Data Research,Raviv Schaffer,R&D,v
+1/1/2025,Shani Bar,Product Design,Product Design,Reut Alon,R&D,v
+16/3/2026,Din Zeligman,Population Health,Quality,Ido Miller,R&D,v
+18/2/2026,Einat Shafir Haviv,Population Health,Quality,Noa Bar Hillel Shushan,R&D,v
+7/12/2025,Tal Ziv,Population Health,Quality,Ido Miller,R&D,v
+9/7/2025,Gal Shnaider,Population Health,Quality,Ido Miller,R&D,v
+29/6/2025,Victoria Maiselman,Population Health,Quality,Ido Miller,R&D,v
+4/6/2025,Omer Barda,Population Health,Quality,Ido Miller,R&D,v
+15/12/2024,Nevo Bonneh Bonomo,Population Health,Quality,Ido Miller,R&D,v
+7/7/2024,Sarah Feldman,Population Health,Quality,Ronen Gordon,R&D,v
+1/1/2023,Ido Miller,Population Health,Quality,Ron Gross,R&D,v
+1/1/2023,Noa Bar Hillel Shushan,Population Health,Quality,Neta Avivi,R&D,v
+7/4/2024,Leor Molcho,Point of Care,Ambient,Ronen Gordon,R&D,v
+4/5/2025,Reut Alon,Product Design,Product Design,Neta Avivi,R&D,v
+21/4/2025,Ariel Tzur,RevOps,RevOps,Ifat Katz-Blitental,Business,v
+10/2/2025,Idan Katz,RevOps,RevOps,Ifat Katz-Blitental,Business,v
+1/1/2025,Ifat Katz-Blitental,RevOps,RevOps,Ohad Shamian,Business,v
+,1,Population Health,,,R&D,
+,2,Data,,,R&D,
+,3,Data,,,R&D,
+,4,Infra,,,R&D,
+,5,Infra,,,R&D,
+,6,Point of Care,,,R&D,
+,7,Point of Care,,,R&D,
+,8,Point of Care,,,R&D,
+,9,Point of Care,,,R&D,
+,10,Product Design,,,R&D,
+,11,Product Design,,,R&D,
+,12,AI,,,R&D,
+,13,AI,,,R&D,
+,14,Data Research,,,R&D,
+,15,Data Research,,,R&D,
+,16,AI,,,R&D,
+,17,Marketing,,,Business,
+,18,Marketing,,,Business,
+,19,Marketing,,,Business,
+,20,Marketing,,,Business,
+,21,Marketing,,,Business,
+,22,Marketing,,,Business,
+,23,Marketing,,,Business,

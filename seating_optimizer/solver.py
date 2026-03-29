@@ -29,17 +29,36 @@ class DayAssigner:
         self.groups = groups
         self.rng = rng
 
-    def assign(self, cover_pair: tuple, dept_common_days: dict) -> Optional[dict]:
+    def assign(
+        self,
+        cover_pair: tuple,
+        dept_common_days: dict,
+        mandatory_overrides: Optional[dict] = None,
+    ) -> Optional[dict]:
         """
         Assign days to groups given dept_common_days {dept: day}.
         All common days are from cover_pair, so cover constraint is auto-satisfied.
 
+        mandatory_overrides: {group_id: list[(day_a, day_b)]} — allowed combos for
+        groups in triangle depts.  The DayAssigner picks randomly from the list, giving
+        the solver's iteration loop natural exploration of different partitions.
+
         Returns {group_id: (day_a, day_b)} or None if infeasible.
         """
         valid_combos = valid_day_combos_for_cover_pair(cover_pair)
+        valid_combos_set = set(valid_combos)
         result = {}
 
         for group in self.groups:
+            # Check for a triangle-dept override: pick randomly from the allowed combos.
+            if mandatory_overrides and group.group_id in mandatory_overrides:
+                allowed = mandatory_overrides[group.group_id]
+                eligible = [c for c in allowed if c in valid_combos_set]
+                if not eligible:
+                    return None
+                result[group.group_id] = self.rng.choice(eligible)
+                continue
+
             # Mandatory days = union of common days for all depts this group has members in
             mandatory = set()
             for dept in group.departments:
@@ -68,15 +87,37 @@ class DayAssigner:
 
         return result
 
-    def assign_load_balanced(self, cover_pair: tuple, dept_common_days: dict) -> Optional[dict]:
+    def assign_load_balanced(
+        self,
+        cover_pair: tuple,
+        dept_common_days: dict,
+        mandatory_overrides: Optional[dict] = None,
+    ) -> Optional[dict]:
         """
         Like assign(), but for free-choice groups, prefer combos that balance load.
+
+        mandatory_overrides: {group_id: list[(day_a, day_b)]} — see assign() docstring.
         """
         valid_combos = valid_day_combos_for_cover_pair(cover_pair)
+        valid_combos_set = set(valid_combos)
         result = {}
         day_load: dict = {d: 0 for d in DAYS}
 
         for group in sorted(self.groups, key=lambda g: -g.size):
+            # Check for a triangle-dept override: pick load-balanced from allowed combos.
+            if mandatory_overrides and group.group_id in mandatory_overrides:
+                allowed = mandatory_overrides[group.group_id]
+                eligible = [c for c in allowed if c in valid_combos_set]
+                if not eligible:
+                    return None
+                best = min(eligible, key=lambda c: _variance(
+                    [day_load[d] + group.size if d in c else day_load[d] for d in DAYS]
+                ))
+                result[group.group_id] = best
+                for d in best:
+                    day_load[d] += group.size
+                continue
+
             mandatory = set()
             for dept in group.departments:
                 if dept in dept_common_days:
@@ -142,9 +183,10 @@ class SeatingAssigner:
     (in one block if possible, else in adjacent blocks within MAX_COL_DISTANCE columns).
     """
 
-    def __init__(self, blocks: list):
+    def __init__(self, blocks: list, cold_seats: Optional[dict] = None):
         self.blocks = blocks
         self.blocks_by_id = {b.block_id: b for b in blocks}
+        self.cold_seats: dict = cold_seats or {}
         # Pre-compute column groups: sets of blocks all within MAX_COL_DISTANCE of each other
         self._col_groups = _compute_column_groups(blocks, MAX_COL_DISTANCE)
 
@@ -212,7 +254,18 @@ class SeatingAssigner:
         """
         Try to place a group. Returns [(block_id, count), ...] or None.
         Attempts: (1) single block, (2) split within each column group.
+        Cold-seated groups are placed only in their required block; infeasible if it doesn't fit.
         """
+        # Cold-seats: group must go in its designated block only.
+        if group.group_id in self.cold_seats:
+            required_id = self.cold_seats[group.group_id]
+            if required_id not in self.blocks_by_id:
+                return None   # block not in office map
+            avail = self.blocks_by_id[required_id].capacity - current_load[required_id]
+            if avail >= group.size:
+                return [(required_id, group.size)]
+            return None   # group doesn't fit in its required block
+
         # Attempt 1: fit in a single block (tightest fit)
         candidates = [
             b for b in self.blocks
@@ -312,8 +365,10 @@ class ConsistencyReconciler:
         block_assignments: list,     # list[GroupBlockAssignment]
         groups_by_id: dict,
         blocks_by_id: dict,
+        cold_seats: Optional[dict] = None,  # {group_id: required_block_id}
     ) -> list:
         """Returns updated block_assignments list."""
+        cold_seats = cold_seats or {}
         # Build mutable load map per (block_id, day)
         load: dict = defaultdict(int)
         for ba in block_assignments:
@@ -325,6 +380,10 @@ class ConsistencyReconciler:
         while improved:
             improved = False
             for group_id, (d1, d2) in day_assignments.items():
+                # Cold-seated groups are anchored to their required block; never move them.
+                if group_id in cold_seats:
+                    continue
+
                 blocks_d1 = [(ba.block_id, ba.count) for ba in bas
                              if ba.group_id == group_id and ba.day == d1]
                 blocks_d2 = [(ba.block_id, ba.count) for ba in bas
@@ -369,6 +428,58 @@ class ConsistencyReconciler:
 
 
 # ---------------------------------------------------------------------------
+# Triangle helpers for over-capacity departments
+# ---------------------------------------------------------------------------
+
+def _valid_triangles_for_cover_pair(cover_pair: tuple) -> list:
+    """
+    Return (d1, d2, d3) triples from DAYS where each of the three 2-subsets
+    {d1,d2}, {d1,d3}, {d2,d3} contains at least one cover day.
+    """
+    from itertools import combinations as _combs
+    a, b = cover_pair
+    result = []
+    for triple in _combs(DAYS, 3):
+        d1, d2, d3 = triple
+        if all(a in c or b in c for c in [(d1, d2), (d1, d3), (d2, d3)]):
+            result.append(triple)
+    return result
+
+
+def _enumerate_triangle_configs(
+    group_ids: list,
+    groups_by_id: dict,
+    cover_pair: tuple,
+    total_capacity: int,
+) -> list:
+    """
+    For a dept that needs the triangle strategy, return override dicts where each
+    group is allowed to use any of the 3 triangle combos.
+
+    Returns list of {group_id: [combo1, combo2, combo3]} dicts, one per valid
+    triangle.  Because any two triangle combos share a day, pairwise dept overlap
+    is guaranteed regardless of which combo each group picks.
+
+    The DayAssigner then randomly (or load-balancedly) selects one combo per group
+    each iteration, giving the solver natural exploration of many partitions.
+
+    Yields one config per valid triangle (a cover pair admits up to 2 triangles).
+    Only yields configs where balanced partition would fit: dept_size * 2/3 <= capacity.
+    """
+    configs = []
+    dept_size = sum(groups_by_id[g].size for g in group_ids)
+
+    for triple in _valid_triangles_for_cover_pair(cover_pair):
+        d1, d2, d3 = triple
+        sb_combos = [(d1, d2), (d1, d3), (d2, d3)]
+        # Prune if even a balanced split would overflow a single day
+        if dept_size * 2 / 3 <= total_capacity:
+            assignment = {gid: list(sb_combos) for gid in group_ids}
+            configs.append(assignment)
+    return configs
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -382,6 +493,7 @@ class Solver:
         n_solutions: int = 5,
         max_iterations_per_cover: int = 200,
         seed: Optional[int] = None,
+        cold_seats: Optional[dict] = None,
     ):
         self.blocks = blocks
         self.blocks_by_id = {b.block_id: b for b in blocks}
@@ -392,6 +504,7 @@ class Solver:
         self.max_iterations = max_iterations_per_cover
         self.rng = random.Random(seed)
         self._seed = seed
+        self.cold_seats: dict = cold_seats or {}
 
     def solve(self, progress_callback=None) -> list:
         """
@@ -416,7 +529,7 @@ class Solver:
                     break
 
                 assigner = DayAssigner(self.groups, self.rng)
-                seating = SeatingAssigner(self.blocks)
+                seating = SeatingAssigner(self.blocks, self.cold_seats)
                 reconciler = ConsistencyReconciler()
 
                 for iteration in range(iters_per_dept_combo):
@@ -458,7 +571,8 @@ class Solver:
 
                     # Phase 3 — consistency reconciliation
                     all_bas = reconciler.reconcile(
-                        day_assignments, all_bas, self.groups_by_id, self.blocks_by_id
+                        day_assignments, all_bas, self.groups_by_id, self.blocks_by_id,
+                        self.cold_seats,
                     )
 
                     # Score
@@ -480,6 +594,109 @@ class Solver:
 
             if len(pool) >= self.n_solutions * 3:
                 break
+
+        # Tier 2: triangle strategy for all multi-group departments simultaneously.
+        # When tier-1 fails it is usually because multiple depts together overflow the
+        # office on their required cover days, even if no single dept exceeds capacity.
+        # Triangulating all depts spreads employees across three days so each day's
+        # combined load stays within capacity while strict pairwise overlap is preserved.
+        # Only runs when tier 1 found fewer solutions than requested.
+        if len(pool) < self.n_solutions:
+            total_cap = sum(b.capacity for b in self.blocks)
+            # All depts with >= 2 groups are candidates for triangle partitioning.
+            # Single-group depts need no common-day enforcement (trivially satisfied).
+            tri_depts = [d for d in depts if len(self.dept_map[d]) >= 2]
+            solo_depts = [d for d in depts if len(self.dept_map[d]) < 2]
+            if tri_depts:
+                from .constraints import check_dept_overlap_constraint
+                for cover_pair in ALL_COVER_PAIRS:
+                    solo_combos = all_dept_day_assignments(cover_pair, solo_depts) or [{}]
+                    # Build cross-product of triangle configs for every tri-dept
+                    all_tri_overrides: list = [{}]
+                    for dept in tri_depts:
+                        tri_configs = _enumerate_triangle_configs(
+                            self.dept_map[dept], self.groups_by_id,
+                            cover_pair, total_cap,
+                        )
+                        if not tri_configs:
+                            continue
+                        merged = []
+                        for existing in all_tri_overrides:
+                            for tc in tri_configs:
+                                merged.append({**existing, **tc})
+                        all_tri_overrides = merged
+
+                    for mandatory_overrides in all_tri_overrides:
+                        if not mandatory_overrides:
+                            continue
+                        for solo_combo in solo_combos:
+                            if len(pool) >= self.n_solutions * 3:
+                                break
+
+                            assigner = DayAssigner(self.groups, self.rng)
+                            seating = SeatingAssigner(self.blocks, self.cold_seats)
+                            reconciler = ConsistencyReconciler()
+
+                            for iteration in range(iters_per_dept_combo):
+                                if iteration < iters_per_dept_combo // 2:
+                                    day_assignments = assigner.assign(
+                                        cover_pair, solo_combo, mandatory_overrides
+                                    )
+                                else:
+                                    day_assignments = assigner.assign_load_balanced(
+                                        cover_pair, solo_combo, mandatory_overrides
+                                    )
+
+                                if day_assignments is None:
+                                    continue
+
+                                # Validate dept pairwise overlap (not guaranteed by construction
+                                # for multi-dept groups that span a large and small dept)
+                                if not check_dept_overlap_constraint(self.dept_map, day_assignments):
+                                    continue
+
+                                all_bas2: list = []
+                                feasible = True
+                                for day in DAYS:
+                                    groups_on_day = [
+                                        self.groups_by_id[gid]
+                                        for gid, days in day_assignments.items()
+                                        if day in days
+                                    ]
+                                    day_result = seating.assign_day(groups_on_day)
+                                    if day_result is None:
+                                        feasible = False
+                                        break
+                                    for ba in day_result:
+                                        ba.day = day
+                                    all_bas2.extend(day_result)
+
+                                if not feasible:
+                                    continue
+
+                                all_bas2 = reconciler.reconcile(
+                                    day_assignments, all_bas2,
+                                    self.groups_by_id, self.blocks_by_id,
+                                    self.cold_seats,
+                                )
+
+                                score, breakdown = compute_total_score(day_assignments, all_bas2)
+                                sig = _solution_signature(day_assignments, all_bas2)
+                                if sig in seen_signatures:
+                                    continue
+                                seen_signatures.add(sig)
+
+                                sol = self._build_solution(
+                                    cover_pair, day_assignments, all_bas2,
+                                    score, breakdown, iteration,
+                                )
+                                pool.append(sol)
+
+                                if len(pool) >= self.n_solutions * 10:
+                                    break
+
+                    if len(pool) >= self.n_solutions * 3:
+                        break
 
         pool.sort(key=lambda s: s.score, reverse=True)
         return pool[: self.n_solutions]

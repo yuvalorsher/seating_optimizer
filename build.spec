@@ -10,6 +10,7 @@ a = Analysis(
     datas=[
         ('data/office_map.csv', 'data'),
         ('data/teams.json', 'data'),
+        ('data/cold_seats.csv', 'data'),
     ],
     hiddenimports=[
         'seating_optimizer',

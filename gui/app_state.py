@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, Signal, QSettings, QStandardPaths
 
 from seating_optimizer.loader import (
     load_office_map, load_employees, get_groups,
-    get_department_map, get_employees_by_group,
+    get_department_map, get_employees_by_group, load_cold_seats,
 )
 from seating_optimizer.persistence import list_solutions, load_solution
 from gui.constants import DEPT_COLORS, DEFAULT_COLOR
@@ -36,6 +36,7 @@ class AppState(QObject):
         self.groups_by_id: dict = {}
         self.employees_by_group: dict = {}   # {group_id: [Employee, ...]}
         self.dept_map: dict = {}             # {dept: [group_id, ...]}
+        self.cold_seats: dict = {}       # {group_id: block_id}
         self.solutions: list = []
         self.active_solution = None
         self.active_day: int = 1
@@ -44,9 +45,11 @@ class AppState(QObject):
         self._settings = QSettings("SeatingOptimizer", "SeatingOptimizer")
         default_map = str(_bundled_data_path("office_map.csv"))
         default_employees = str(_bundled_data_path("Employees list for seating with fake department.csv"))
+        default_cold_seats = str(_bundled_data_path("cold_seats.csv"))
         self.office_map_path: str = self._settings.value("office_map_path", default_map)
         # Use new key; never fall back to old teams_path (different format)
         self.employees_path: str = self._settings.value("employees_path", default_employees)
+        self.cold_seats_path: str = self._settings.value("cold_seats_path", default_cold_seats)
 
         # Solutions directory
         app_data = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
@@ -71,6 +74,10 @@ class AppState(QObject):
         self.employees_path = path
         self._settings.setValue("employees_path", path)
 
+    def set_cold_seats_path(self, path: str):
+        self.cold_seats_path = path
+        self._settings.setValue("cold_seats_path", path)
+
     def load_data_files(self):
         self.blocks = load_office_map(self.office_map_path)
         self.blocks_by_id = {b.block_id: b for b in self.blocks}
@@ -79,6 +86,10 @@ class AppState(QObject):
         self.groups_by_id = {g.group_id: g for g in self.groups}
         self.employees_by_group = get_employees_by_group(self.employees)
         self.dept_map = get_department_map(self.groups)
+        try:
+            self.cold_seats = load_cold_seats(self.cold_seats_path)
+        except Exception:
+            self.cold_seats = {}
 
     def _load_solutions_from_disk(self):
         paths = list_solutions(self.solutions_dir)

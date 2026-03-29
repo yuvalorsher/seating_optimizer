@@ -96,3 +96,19 @@ def get_employees_by_group(employees: list) -> dict:
     for emp in employees:
         result.setdefault(emp.group_id, []).append(emp)
     return result
+
+
+def load_cold_seats(path: str) -> dict:
+    """
+    Parse a cold-seats CSV with columns 'Group' and 'Block'.
+    Returns {group_id: block_id} for groups that must sit in a specific block.
+    """
+    cold_seats: dict = {}
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            group = row["Group"].strip()
+            block = row["Block"].strip()
+            if group and block:
+                cold_seats[group] = block
+    return cold_seats

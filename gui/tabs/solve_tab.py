@@ -53,6 +53,16 @@ class SolveTab(QWidget):
         employees_browse_btn.clicked.connect(self._browse_employees)
         left_layout.addWidget(employees_browse_btn)
 
+        # Cold Seats CSV path
+        left_layout.addWidget(QLabel("Cold Seats CSV:"))
+        self._cold_seats_path_lbl = QLabel(self._short_path(state.cold_seats_path))
+        self._cold_seats_path_lbl.setWordWrap(True)
+        self._cold_seats_path_lbl.setStyleSheet("color: #555; font-size: 10px;")
+        left_layout.addWidget(self._cold_seats_path_lbl)
+        cold_seats_browse_btn = QPushButton("Browse…")
+        cold_seats_browse_btn.clicked.connect(self._browse_cold_seats)
+        left_layout.addWidget(cold_seats_browse_btn)
+
         left_layout.addSpacing(8)
 
         # Number of solutions
@@ -144,6 +154,15 @@ class SolveTab(QWidget):
             self._employees_path_lbl.setText(self._short_path(path))
             self._reload_data()
 
+    def _browse_cold_seats(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Cold Seats CSV", "", "CSV files (*.csv);;All files (*)"
+        )
+        if path:
+            self._state.set_cold_seats_path(path)
+            self._cold_seats_path_lbl.setText(self._short_path(path))
+            self._reload_data()
+
     def _reload_data(self):
         try:
             self._state.load_data_files()
@@ -166,6 +185,7 @@ class SolveTab(QWidget):
             n_solutions=self._n_solutions_spin.value(),
             max_iters=self._max_iters_spin.value(),
             seed=seed if seed > 0 else None,
+            cold_seats=self._state.cold_seats,
         )
         self._thread.progress.connect(self._on_progress)
         self._thread.finished.connect(self._on_solver_finished)

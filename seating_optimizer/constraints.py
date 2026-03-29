@@ -104,6 +104,26 @@ def check_column_distance_constraint(
     return True
 
 
+def check_cold_seats_constraint(
+    block_assignments: list,   # list[GroupBlockAssignment]
+    cold_seats: dict,          # {group_id: required_block_id}
+) -> bool:
+    """
+    For each group in cold_seats, all of its block assignments must use the
+    required block and only that block.
+    """
+    from collections import defaultdict
+    group_blocks: dict = defaultdict(set)
+    for ba in block_assignments:
+        if ba.group_id in cold_seats:
+            group_blocks[ba.group_id].add(ba.block_id)
+    for group_id, required_block in cold_seats.items():
+        used = group_blocks.get(group_id, set())
+        if used and used != {required_block}:
+            return False
+    return True
+
+
 def check_all_hard_constraints(
     cover_pair: tuple,
     day_assignments: dict,       # {group_id: (day_a, day_b)}
@@ -111,6 +131,7 @@ def check_all_hard_constraints(
     groups_by_id: dict,
     blocks_by_id: dict,
     dept_map: dict,
+    cold_seats: dict = None,     # {group_id: required_block_id}
 ) -> tuple:
     """
     Run all hard constraint checks.
@@ -140,5 +161,10 @@ def check_all_hard_constraints(
     # Constraint: column distance
     if not check_column_distance_constraint(block_assignments, blocks_by_id):
         violations.append("Column distance constraint violated: group members >4 columns apart")
+
+    # Constraint: cold seats
+    if cold_seats:
+        if not check_cold_seats_constraint(block_assignments, cold_seats):
+            violations.append("Cold-seats constraint violated: group not in required block")
 
     return (len(violations) == 0, violations)
