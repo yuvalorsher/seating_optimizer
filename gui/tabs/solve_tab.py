@@ -190,7 +190,8 @@ class SolveTab(QWidget):
     def _on_solution_saved(self, solution):
         try:
             persistence.save_solution(solution, self._state.solutions_dir)
-            self._state.solutions.insert(0, solution)
+            self._state.solutions.append(solution)
+            self._state.solutions.sort(key=lambda s: s.score, reverse=True)
             self._state.solution_list_changed.emit()
             QMessageBox.information(self, "Saved", f"Solution {solution.solution_id} saved.")
         except Exception as exc:

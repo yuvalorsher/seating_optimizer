@@ -95,6 +95,7 @@ class AppState(QObject):
                 self.solutions.append(load_solution(p))
             except Exception:
                 pass
+        self.solutions.sort(key=lambda s: s.score, reverse=True)
 
     def group_color(self, group_id: str) -> str:
         if group_id not in self._group_color_cache:

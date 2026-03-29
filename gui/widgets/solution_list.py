@@ -105,8 +105,10 @@ class SolutionListWidget(QWidget):
 
     def populate(self, solutions: list):
         self._list.clear()
-        for sol in solutions:
-            self.add_solution(sol)
+        for sol in sorted(solutions, key=lambda s: s.score, reverse=True):
+            item = QListWidgetItem(_solution_label(sol))
+            item.setData(Qt.UserRole, sol)
+            self._list.addItem(item)
 
     def add_solution(self, solution):
         item = QListWidgetItem(_solution_label(solution))
