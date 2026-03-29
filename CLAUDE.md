@@ -32,16 +32,20 @@ The app is split into a core logic package (`seating_optimizer/`) and a PySide6 
 
 **Data flow**: `loader.py` → `models.py` → `solver.py` → `persistence.py`
 
-- `models.py` — Frozen dataclasses `Block`, `Team`; mutable `Solution`, `TeamDayAssignment`, `TeamBlockAssignment`. All modules share these types.
-- `loader.py` — `load_office_map()` parses the CSV into `Block` objects (non-zero cells only, IDs B0–BN in row-major order). `load_teams()` parses teams.json.
-- `constraints.py` — Hard constraint checkers. Key function: `valid_day_combos_for_cover_pair(cover_pair)` returns the 5 valid 2-day combos for a given cover pair (excludes the one combo {C,D} that contains neither cover day).
-- `scorer.py` — `compute_total_score()` = 0.6 × consistency + 0.4 × dept_proximity. Consistency = fraction of teams with the same block on both days. Dept proximity = 1 − avg pairwise Manhattan distance / 8, averaged over all (day, dept) pairs with ≥2 teams.
+- `models.py` — Frozen dataclasses `Block`, `Employee`, `Group`; mutable `Solution`, `GroupDayAssignment`, `GroupBlockAssignment`. All modules share these types.
+- `loader.py` — `load_office_map()` parses the CSV into `Block` objects (non-zero cells only, IDs B0–BN in row-major order). `load_employees()` parses the employee CSV (columns: Display name, Group, Department). `get_groups()` aggregates employees into `Group` objects. `get_employees_by_group()` returns `{group_id: [Employee, ...]}`.
+- `constraints.py` — Hard constraint checkers. Key functions:
+  - `valid_day_combos_for_cover_pair(cover_pair)` — 5 valid 2-day combos for a cover pair.
+  - `all_dept_day_assignments(cover_pair, depts)` — enumerates all 2^N ways to assign a common day (from cover pair) to each dept.
+  - `check_dept_overlap_constraint(dept_map, day_assignments)` — every pair of groups in the same dept must share ≥1 day.
+  - `check_column_distance_constraint(block_assignments, blocks_by_id)` — group members in different blocks must be ≤4 columns apart.
+- `scorer.py` — `compute_total_score()` = 0.6 × compactness + 0.4 × consistency. Compactness = fraction of (group, day) pairs where the group fits in a single block. Consistency = fraction of groups with the same block(s) on both their days.
 - `solver.py` — Three-phase pipeline run inside `Solver.solve()`:
-  1. **`DayAssigner`** — samples day combos per team; by sampling only from `valid_day_combos_for_cover_pair`, the cover constraint is satisfied by construction (no post-check needed).
-  2. **`SeatingAssigner`** — per-day bin-packing: groups teams by dept, tries to fit each dept group into one block (tightest fit), splits greedily if needed, then runs `_local_swap_pass` for cross-dept swaps. **Important**: same-dept swaps are skipped in `_local_swap_pass` because the gain formula spuriously returns >0 for them (both teams count each other as a potential teammate), which causes an infinite loop.
-  3. **`ConsistencyReconciler`** — post-processes to maximise teams sharing the same block on both days via direct moves.
-- `updater.py` — `SolutionUpdater.update()` detects violated (team, day) pairs (where new team size exceeds block capacity), greedily relocates them, and falls back to a partial re-solve via `Solver` for teams that can't be placed. Sets `metadata["derived_from"]` to the source solution ID.
-- `persistence.py` — JSON serialization of `Solution` objects; `SOLUTIONS_DIR = Path("solutions")`. The GUI overrides the directory to `~/Library/Application Support/Seating Optimizer/solutions/`.
+  1. **`DayAssigner`** — assigns day combos to groups using a **dept-common-day strategy**: each dept gets a common day from the cover pair, and every group with members in that dept must attend it. This satisfies the dept-overlap constraint (rule d) and cover constraint by construction. Groups spanning two depts have both mandatory days fixed; single-dept groups pick their second day freely. The solver enumerates all 2^N_depts dept-day combinations.
+  2. **`SeatingAssigner`** — per-day bin-packing by group: tries to fit each group in a single block (tightest fit); if too large, splits across blocks within the same column group (column distance ≤ 4). `_compute_column_groups()` pre-computes which blocks are within 4 columns of each other.
+  3. **`ConsistencyReconciler`** — post-processes to maximise single-block groups that share the same block on both days. Skips multi-block groups.
+- `updater.py` — Stub only; raises `NotImplementedError`. Not yet updated for the employee/group model.
+- `persistence.py` — JSON serialization of `Solution` objects; `SOLUTIONS_DIR = Path("solutions")`. The GUI overrides the directory to `~/Library/Application Support/Seating Optimizer/solutions/`. `GroupBlockAssignment` includes a `count` field (employees seated in that block).
 
 ### Desktop GUI (`gui/`)
 
@@ -50,54 +54,64 @@ The app is split into a core logic package (`seating_optimizer/`) and a PySide6 
 **Data flow**: `AppState` (shared state + Qt signals) → tab widgets → `OfficeGridView` (interactive grid).
 
 #### `gui/app_state.py` — `AppState(QObject)`
-Central owner of all runtime state. Signals: `solution_list_changed`, `active_solution_changed(object)`, `active_day_changed(int)`. Solutions dir: `~/Library/Application Support/Seating Optimizer/solutions/` (via `QStandardPaths`). Also checks local `solutions/` for backwards compat. File paths persisted via `QSettings("SeatingOptimizer", "SeatingOptimizer")`.
+Central owner of all runtime state. Holds `blocks`, `employees`, `groups`, `groups_by_id`, `employees_by_group`, `dept_map`. Signals: `solution_list_changed`, `active_solution_changed(object)`, `active_day_changed(int)`. Solutions dir: `~/Library/Application Support/Seating Optimizer/solutions/` (via `QStandardPaths`). Also checks local `solutions/` for backwards compat. File paths persisted via `QSettings("SeatingOptimizer", "SeatingOptimizer")` — keys: `office_map_path`, `employees_path`. `group_color(group_id)` returns a stable color hex per group (hash-based from `DEPT_COLORS` palette).
 
 #### `gui/main_window.py` — `MainWindow(QMainWindow)`
-Four-tab layout (Solve / Visualize / Update / Manual). Connects `currentChanged` to trigger `_fit_in_view()` when Visualize or Manual tab becomes active. File menu opens office map / teams JSON. Status bar shows block/team/solution counts.
+Four-tab layout (Solve / Visualize / Update / Manual). Connects `currentChanged` to trigger `_fit_in_view()` when Visualize tab becomes active. File menu opens office map / employees CSV. Status bar shows block/group/employee/solution counts.
 
 #### `gui/tabs/solve_tab.py` — `SolveTab`
-Settings panel (file paths, n_solutions, max_iters, seed) + Run Solver button. Spawns `SolverThread`; progress bar connected to `progress` signal. Results list with Save / Delete / Visualize buttons. Schedule table below.
+Settings panel (office map path, employees CSV path, n_solutions, max_iters, seed) + Run Solver button. Spawns `SolverThread`; progress bar connected to `progress` signal. Results list with Save / Delete / Visualize buttons. Schedule table shows: Group, Dept(s), Size, Day 1 → block(s), Day 2 → block(s), Single Block.
 
 #### `gui/tabs/visualize_tab.py` — `VisualizeTab`
-Solution combo + day selector (1–4 toggle buttons) + metrics bar + dept legend + `OfficeGridView` + block/team summary tables. **Important**: `_select_solution_in_combo()` holds `_refreshing_combo` guard to prevent `currentIndexChanged` re-entrancy. All updates go through `_display_solution()` — never re-emit signals from within update handlers.
+Solution combo + day selector (1–4 toggle buttons) + metrics bar (Score, Compactness, Consistency, Cover Days, ID) + group legend + `OfficeGridView` + block/group summary tables. **Important**: `_select_solution_in_combo()` holds `_refreshing_combo` guard to prevent `currentIndexChanged` re-entrancy. All updates go through `_display_solution()` — never re-emit signals from within update handlers.
 
 #### `gui/tabs/update_tab.py` — `UpdateTab`
-Load base solution + new teams JSON → diff table (red = violated, yellow = changed) → `UpdaterThread` → before/after read-only grids.
+Placeholder — not yet updated for the employee/group model.
 
 #### `gui/tabs/manual_tab.py` — `ManualTab`
-Fully manual seating assignment. Left panel: sortable team list (by dept/size/name) with drag support and assignment status. Right panel: `_ManualGridView` (subclass of `OfficeGridView`) with day selector. Key interactions:
-- **Drag team from list → block**: assigns team to that block on the current day.
-- **Drag team chip from block → list**: removes assignment for the current day.
-- **Click team in list**: highlights all blocks green (fits) or red (over capacity) for that team/day.
-- **Right-click team chip in block**: context menu to assign to same block on another day (green/red dot per day) or remove from current day.
-- Over-capacity drops are allowed (red highlight + constraint warning).
-- Live constraint banner flags: unassigned teams, partial assignments (only 1 day), cover constraint violations, capacity overflows.
-- Cover pair picker (6 combos). New button resets to fresh empty solution (with confirmation). Load/Save buttons for JSON round-trip.
-- `_ManualGridView` owns `_allow_oversize=True`, `_highlighted_team_id`, and overrides `_on_team_dropped` / `_rebuild_scene`. Right-click removes via `_remove_from_day()` which emits `team_removed_from_day(team_id, day)` back to `ManualTab`.
-- Internal `from_block_id` sentinels: `"__list__"` = drop came from the team list (new day assignment); `"__right_click__"` = assigned via context menu. Both cause `ManualTab._on_team_moved` to register the day in `_team_days`.
-- `_TeamListWidget` (custom `QListWidget`): overrides `startDrag` to emit MIME `application/x-team-chip` with `from_block_id="__list__"`. Also accepts drops (from blocks) and emits `team_returned(team_id, from_block_id)` to trigger removal.
+Placeholder — not yet updated for the employee/group model.
 
 #### `gui/widgets/block_item.py` — `BlockItem(QGraphicsObject)`
-Paints one seating block: rounded rect, block ID, capacity bar (green/orange/red), team chips. Initiates drag via `QDrag` with MIME `application/x-team-chip` = `{"team_id": "...", "from_block_id": "..."}`. Validates capacity in `dragEnterEvent` (green/red border highlight); when `allow_oversize=True` (Manual tab), over-capacity drops are accepted with red highlight. Emits `team_dropped(team_id, from_block_id, to_block_id)` on drop; emits `team_right_clicked(team_id, block_id)` on right-click. Supports `set_external_highlight(color)` for persistent selection highlights (separate from drag-hover `_highlight`). **Important**: `QGraphicsItem.ItemIsDropEnabled` flag does not exist in PySide6 6.10 — use `setAcceptDrops(True)` only.
+Paints one seating block: rounded rect, block ID, capacity bar (green/orange/red), group chips. Each chip shows `"GroupName ×N"` colored by group. Hover over a chip shows a tooltip with employee names (`employees_by_group` passed at construction). Initiates drag via `QDrag` with MIME `application/x-team-chip` = `{"team_id": group_id, "from_block_id": "..."}`. **Important**: `QGraphicsItem.ItemIsDropEnabled` flag does not exist in PySide6 6.10 — use `setAcceptDrops(True)` only. Accepts hover events (`setAcceptHoverEvents(True)`) for tooltip display.
 
 #### `gui/widgets/office_grid.py` — `OfficeGridView(QGraphicsView)`
-Interactive office grid. `load(solution, day, blocks, teams_by_id, dept_color_fn)` builds a `QGraphicsScene` with `BlockItem` objects. Grid dimensions computed dynamically: `max(b.row)+1` × `max(b.col)+1`. **Important**: `fitInView` uses `QTimer.singleShot(0, ...)` everywhere (in `_rebuild_scene`, `showEvent`, `resizeEvent`) — the viewport size is not reliable until the event loop runs. `setAcceptDrops(True)` must be set on both the view and each `BlockItem` for drag events to fire. `highlight_for_team(team_id, day)` / `clear_highlights()` set external highlights on all block items (used by Manual tab for selection feedback). `_allow_oversize` flag (default `False`) is passed to `BlockItem` to allow over-capacity drops.
+Interactive office grid. `load(solution, day, blocks, groups_by_id, group_color_fn, employees_by_group)` builds a `QGraphicsScene` with `BlockItem` objects. Grid dimensions computed dynamically: `max(b.row)+1` × `max(b.col)+1`. **Important**: `fitInView` uses `QTimer.singleShot(0, ...)` everywhere — the viewport size is not reliable until the event loop runs. `setAcceptDrops(True)` must be set on both the view and each `BlockItem`. `highlight_for_group(group_id, day)` / `clear_highlights()` set external highlights on all block items.
 
 #### `gui/threads/`
-- `SolverThread(QThread)` — wraps `Solver.solve(progress_callback)`; signals: `progress(int, int)`, `finished(list)`, `error(str)`.
-- `UpdaterThread(QThread)` — wraps `SolutionUpdater.update()`; signals: `finished(object)`, `error(str)`.
+- `SolverThread(QThread)` — wraps `Solver.solve(progress_callback)`; takes `blocks` and `groups`; signals: `progress(int, int)`, `finished(list)`, `error(str)`.
+- `UpdaterThread(QThread)` — stub; wraps `SolutionUpdater` (which raises NotImplementedError).
 
-### Key constraint: Cover pair
-The cover constraint (constraint 3) says two specific days A, B must exist such that every team comes on A, B, or both. The solver handles this by fixing a cover pair and only allowing teams to pick day combos that include A or B — making the constraint structurally impossible to violate rather than checking it after the fact. The outer loop cycles through all 6 possible cover pairs.
+### Key constraints
+
+| Rule | Description | How enforced |
+|------|-------------|--------------|
+| a | Each employee attends exactly 2 days | Group gets exactly 2-day combo |
+| b | Cover pair: 2 days covering everyone | All common days come from cover pair → by construction |
+| c | Same group → same days | Group is the atomic scheduling unit |
+| d | Every dept pair shares ≥1 day | Dept-common-day strategy: all groups in dept D attend `cd_D` |
+| e | Same-group employees ≤4 columns apart | SeatingAssigner only overflows within column groups |
 
 ### Data files
 - `data/office_map.csv` — Grid CSV; non-zero cells are seating blocks, parsed row-major into Block objects.
-- `data/teams.json` — Teams with name, size, department.
-- `solutions/` — Legacy Streamlit output (auto-loaded by GUI for backwards compat).
+- `data/Employees list for seating with fake department.csv` — Employee list; columns: Start date, Display name, Group, Team, Reports to, Department. Default input file.
+- `solutions/` — Legacy output (auto-loaded by GUI for backwards compat).
 - `~/Library/Application Support/Seating Optimizer/solutions/` — Primary solutions dir when running as .app.
+
+### Solution JSON format
+```json
+{
+  "solution_id": "a1b2c3d4",
+  "cover_pair": [1, 2],
+  "day_assignments": [{"group_id": "AI", "days": [1, 3]}],
+  "block_assignments": [{"group_id": "AI", "day": 1, "block_id": "B0", "count": 10}],
+  "score": 0.967,
+  "score_breakdown": {"compactness": 1.0, "consistency": 0.917}
+}
+```
+A group may have **multiple** `block_assignments` for the same day if it overflows across blocks.
 
 ### Packaging
 - `build.spec` — PyInstaller spec; bundles `data/` files, excludes streamlit/pandas.
-- Output: `dist/SeatingOptimizer.app` (~88MB). Drag to `/Applications` to install.
+- Output: `dist/SeatingOptimizer.app`. Drag to `/Applications` to install.
 - Bundled data files land at `Contents/Resources/data/`; `sys._MEIPASS` points to `Contents/Resources/`.
 - **After any code change, the app must be rebuilt** with `.venv/bin/pyinstaller build.spec --clean -y` before the changes are visible in `dist/SeatingOptimizer` or `dist/SeatingOptimizer.app`. Use `.venv/bin/python -m gui.main` for rapid iteration without rebuilding.

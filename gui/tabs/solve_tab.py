@@ -43,15 +43,15 @@ class SolveTab(QWidget):
         map_browse_btn.clicked.connect(self._browse_map)
         left_layout.addWidget(map_browse_btn)
 
-        # Teams JSON path
-        left_layout.addWidget(QLabel("Teams JSON:"))
-        self._teams_path_lbl = QLabel(self._short_path(state.teams_path))
-        self._teams_path_lbl.setWordWrap(True)
-        self._teams_path_lbl.setStyleSheet("color: #555; font-size: 10px;")
-        left_layout.addWidget(self._teams_path_lbl)
-        teams_browse_btn = QPushButton("Browse…")
-        teams_browse_btn.clicked.connect(self._browse_teams)
-        left_layout.addWidget(teams_browse_btn)
+        # Employees CSV path
+        left_layout.addWidget(QLabel("Employees CSV:"))
+        self._employees_path_lbl = QLabel(self._short_path(state.employees_path))
+        self._employees_path_lbl.setWordWrap(True)
+        self._employees_path_lbl.setStyleSheet("color: #555; font-size: 10px;")
+        left_layout.addWidget(self._employees_path_lbl)
+        employees_browse_btn = QPushButton("Browse…")
+        employees_browse_btn.clicked.connect(self._browse_employees)
+        left_layout.addWidget(employees_browse_btn)
 
         left_layout.addSpacing(8)
 
@@ -65,8 +65,8 @@ class SolveTab(QWidget):
         # Max iterations
         left_layout.addWidget(QLabel("Max iterations/cover:"))
         self._max_iters_spin = QSpinBox()
-        self._max_iters_spin.setRange(50, 500)
-        self._max_iters_spin.setValue(200)
+        self._max_iters_spin.setRange(4, 200)
+        self._max_iters_spin.setValue(20)
         left_layout.addWidget(self._max_iters_spin)
 
         # Seed
@@ -135,13 +135,13 @@ class SolveTab(QWidget):
             self._map_path_lbl.setText(self._short_path(path))
             self._reload_data()
 
-    def _browse_teams(self):
+    def _browse_employees(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Teams JSON", "", "JSON files (*.json);;All files (*)"
+            self, "Select Employees CSV", "", "CSV files (*.csv);;All files (*)"
         )
         if path:
-            self._state.set_teams_path(path)
-            self._teams_path_lbl.setText(self._short_path(path))
+            self._state.set_employees_path(path)
+            self._employees_path_lbl.setText(self._short_path(path))
             self._reload_data()
 
     def _reload_data(self):
@@ -151,8 +151,8 @@ class SolveTab(QWidget):
             QMessageBox.warning(self, "Load Error", f"Failed to load data files:\n{exc}")
 
     def _run_solver(self):
-        if not self._state.blocks or not self._state.teams:
-            QMessageBox.warning(self, "No Data", "Please load office map and teams files first.")
+        if not self._state.blocks or not self._state.groups:
+            QMessageBox.warning(self, "No Data", "Please load office map and employees CSV first.")
             return
 
         self._run_btn.setEnabled(False)
@@ -162,7 +162,7 @@ class SolveTab(QWidget):
         seed = self._seed_spin.value()
         self._thread = SolverThread(
             blocks=self._state.blocks,
-            teams=self._state.teams,
+            groups=self._state.groups,
             n_solutions=self._n_solutions_spin.value(),
             max_iters=self._max_iters_spin.value(),
             seed=seed if seed > 0 else None,
@@ -205,7 +205,7 @@ class SolveTab(QWidget):
         self._populate_schedule(solution)
 
     def _make_schedule_table(self) -> QTableWidget:
-        cols = ["Team", "Dept", "Size", "Day 1", "Day 2", "Same Block"]
+        cols = ["Group", "Dept(s)", "Size", "Day 1", "Day 2", "Single Block"]
         table = QTableWidget(0, len(cols))
         table.setHorizontalHeaderLabels(cols)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -217,28 +217,40 @@ class SolveTab(QWidget):
     def _populate_schedule(self, solution):
         table = self._schedule_table
         table.setRowCount(0)
-        teams_by_id = self._state.teams_by_id
+        groups_by_id = self._state.groups_by_id
 
         for da in solution.day_assignments:
-            team = teams_by_id.get(da.team_id)
-            if team is None:
+            group = groups_by_id.get(da.group_id)
+            if group is None:
                 continue
             row = table.rowCount()
             table.insertRow(row)
 
             d1, d2 = da.days
-            b1 = solution.get_team_block(da.team_id, d1)
-            b2 = solution.get_team_block(da.team_id, d2)
-            same = b1 is not None and b2 is not None and b1 == b2
+            blocks_d1 = solution.get_group_blocks(da.group_id, d1)
+            blocks_d2 = solution.get_group_blocks(da.group_id, d2)
 
-            table.setItem(row, 0, QTableWidgetItem(team.name))
-            table.setItem(row, 1, QTableWidgetItem(team.department))
-            table.setItem(row, 2, QTableWidgetItem(str(team.size)))
-            table.setItem(row, 3, QTableWidgetItem(f"Day {d1} → {b1 or '?'}"))
-            table.setItem(row, 4, QTableWidgetItem(f"Day {d2} → {b2 or '?'}"))
+            def fmt_blocks(blocks):
+                if not blocks:
+                    return "?"
+                if len(blocks) == 1:
+                    return blocks[0][0]
+                return "+".join(f"{bid}({cnt})" for bid, cnt in blocks)
 
-            same_item = QTableWidgetItem("Yes" if same else "No")
-            if same:
+            single_block = (
+                len(blocks_d1) == 1 and len(blocks_d2) == 1
+                and blocks_d1[0][0] == blocks_d2[0][0]
+            )
+
+            dept_str = ", ".join(sorted(group.departments))
+            table.setItem(row, 0, QTableWidgetItem(group.name))
+            table.setItem(row, 1, QTableWidgetItem(dept_str))
+            table.setItem(row, 2, QTableWidgetItem(str(group.size)))
+            table.setItem(row, 3, QTableWidgetItem(f"Day {d1} → {fmt_blocks(blocks_d1)}"))
+            table.setItem(row, 4, QTableWidgetItem(f"Day {d2} → {fmt_blocks(blocks_d2)}"))
+
+            same_item = QTableWidgetItem("Yes" if single_block else "No")
+            if single_block:
                 same_item.setBackground(QColor("#d4edda"))
             else:
                 same_item.setBackground(QColor("#fff3cd"))

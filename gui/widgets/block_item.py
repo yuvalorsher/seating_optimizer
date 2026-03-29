@@ -6,7 +6,7 @@ from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QFont, QDrag, QCursor,
     QFontMetrics,
 )
-from PySide6.QtWidgets import QGraphicsObject, QApplication
+from PySide6.QtWidgets import QGraphicsObject, QApplication, QToolTip
 
 from gui.constants import CELL_W, CELL_H, DEFAULT_COLOR
 
@@ -18,50 +18,50 @@ _BAR_MARGIN_TOP = 4
 
 
 class BlockItem(QGraphicsObject):
-    team_dropped = Signal(str, str, str)       # team_id, from_block_id, to_block_id
-    team_right_clicked = Signal(str, str)       # team_id, block_id
+    team_dropped = Signal(str, str, str)   # group_id, from_block_id, to_block_id
+    team_right_clicked = Signal(str, str)  # group_id, block_id
 
     def __init__(
         self,
         block,
-        teams_by_id: dict,
-        dept_color_fn,
+        groups_by_id: dict,
+        group_color_fn,
+        employees_by_group: dict = None,
         read_only: bool = False,
         allow_oversize: bool = False,
     ):
         super().__init__()
         self._block = block
-        self._teams_by_id = teams_by_id
-        self._dept_color_fn = dept_color_fn
+        self._groups_by_id = groups_by_id
+        self._group_color_fn = group_color_fn
+        self._employees_by_group = employees_by_group or {}
         self._read_only = read_only
         self._allow_oversize = allow_oversize
-        self._team_ids: list[str] = []
-        self._chip_rects: list[tuple[QRectF, str]] = []  # (rect, team_id)
-        self._highlight: str | None = None           # drag-hover highlight
-        self._external_highlight: str | None = None  # externally set (selection)
+        # Each chip: (group_id, count)
+        self._group_chips: list[tuple[str, int]] = []
+        self._chip_rects: list[tuple[QRectF, str]] = []  # (rect, group_id)
+        self._highlight: str | None = None
+        self._external_highlight: str | None = None
         self._drag_start: QPointF | None = None
-        self._drag_team_id: str | None = None
+        self._drag_group_id: str | None = None
 
         self.setAcceptDrops(True)
+        self.setAcceptHoverEvents(True)
         if not read_only:
             self.setCursor(QCursor(Qt.OpenHandCursor))
 
     def set_external_highlight(self, color: str | None):
-        """Set a persistent highlight (green/red/None) from outside, e.g. team selection."""
         self._external_highlight = color
         self.update()
 
-    def set_teams(self, team_ids: list[str]):
-        self._team_ids = list(team_ids)
+    def set_groups(self, group_chips: list[tuple[str, int]]):
+        """Set displayed groups: list of (group_id, count)."""
+        self._group_chips = list(group_chips)
         self._chip_rects = []
         self.update()
 
     def _used_seats(self) -> int:
-        return sum(
-            self._teams_by_id[tid].size
-            for tid in self._team_ids
-            if tid in self._teams_by_id
-        )
+        return sum(count for _, count in self._group_chips)
 
     def boundingRect(self) -> QRectF:
         return QRectF(0, 0, CELL_W, CELL_H)
@@ -74,10 +74,8 @@ class BlockItem(QGraphicsObject):
 
         # --- Background ---
         painter.setRenderHint(QPainter.Antialiasing)
-        bg_color = QColor("#ffffff")
-        painter.setBrush(QBrush(bg_color))
+        painter.setBrush(QBrush(QColor("#ffffff")))
 
-        # Drag-hover highlight takes priority over external (selection) highlight
         effective_highlight = self._highlight or self._external_highlight
         if effective_highlight == "green":
             border_color = QColor("#27AE60")
@@ -102,7 +100,6 @@ class BlockItem(QGraphicsObject):
         painter.drawText(QRectF(8, 4, CELL_W - 16, 16), Qt.AlignLeft | Qt.AlignVCenter,
                          self._block.block_id)
 
-        # Cap label in gray
         cap_font = QFont()
         cap_font.setPointSize(8)
         painter.setFont(cap_font)
@@ -138,7 +135,7 @@ class BlockItem(QGraphicsObject):
             painter.setBrush(QBrush(bar_color))
             painter.drawRoundedRect(fill_rect, 3, 3)
 
-        # --- Team chips ---
+        # --- Group chips ---
         chip_x = _CHIP_MARGIN
         chip_y = _HEADER_H + 2
         chip_w = CELL_W - _CHIP_MARGIN * 2
@@ -151,22 +148,20 @@ class BlockItem(QGraphicsObject):
         painter.setFont(chip_font)
         fm = QFontMetrics(chip_font)
 
-        teams_to_show = self._team_ids[:max_chips]
-        overflow = len(self._team_ids) - len(teams_to_show)
+        chips_to_show = self._group_chips[:max_chips]
+        overflow = len(self._group_chips) - len(chips_to_show)
 
-        for team_id in teams_to_show:
-            team = self._teams_by_id.get(team_id)
-            if team is None:
-                continue
-            color_hex = self._dept_color_fn(team.department)
+        for group_id, count in chips_to_show:
+            color_hex = self._group_color_fn(group_id)
             chip_rect = QRectF(chip_x, chip_y, chip_w, _CHIP_H)
-            self._chip_rects.append((chip_rect, team_id))
+            self._chip_rects.append((chip_rect, group_id))
 
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(QColor(color_hex)))
             painter.drawRoundedRect(chip_rect, 4, 4)
 
-            label = f"{team.name} ({team.size})"
+            group = self._groups_by_id.get(group_id)
+            label = f"{group_id} ×{count}" if group else f"{group_id} ×{count}"
             elided = fm.elidedText(label, Qt.ElideRight, int(chip_w) - 8)
             painter.setPen(QPen(QColor("#ffffff")))
             painter.drawText(chip_rect.adjusted(4, 0, -4, 0), Qt.AlignLeft | Qt.AlignVCenter, elided)
@@ -182,30 +177,46 @@ class BlockItem(QGraphicsObject):
             painter.drawText(
                 QRectF(chip_x, chip_y, chip_w, _CHIP_H),
                 Qt.AlignLeft | Qt.AlignVCenter,
-                f"+{overflow} more",
+                f"+{overflow} more groups",
             )
 
-    def _team_at_pos(self, pos: QPointF) -> str | None:
-        for chip_rect, team_id in self._chip_rects:
+    def _group_at_pos(self, pos: QPointF) -> str | None:
+        for chip_rect, group_id in self._chip_rects:
             if chip_rect.contains(pos):
-                return team_id
+                return group_id
         return None
+
+    def hoverMoveEvent(self, event):
+        group_id = self._group_at_pos(event.pos())
+        if group_id and group_id in self._employees_by_group:
+            names = [e.name for e in self._employees_by_group[group_id]]
+            tooltip = f"<b>{group_id}</b><br>" + "<br>".join(names)
+            QToolTip.showText(
+                event.screenPos().toPoint(), tooltip,
+            )
+        else:
+            QToolTip.hideText()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        QToolTip.hideText()
+        super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         if self._read_only:
             event.ignore()
             return
         if event.button() == Qt.RightButton:
-            team_id = self._team_at_pos(event.pos())
-            if team_id:
-                self.team_right_clicked.emit(team_id, self._block.block_id)
+            group_id = self._group_at_pos(event.pos())
+            if group_id:
+                self.team_right_clicked.emit(group_id, self._block.block_id)
                 event.accept()
                 return
         if event.button() == Qt.LeftButton:
-            team_id = self._team_at_pos(event.pos())
-            if team_id:
+            group_id = self._group_at_pos(event.pos())
+            if group_id:
                 self._drag_start = event.pos()
-                self._drag_team_id = team_id
+                self._drag_group_id = group_id
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -216,12 +227,12 @@ class BlockItem(QGraphicsObject):
             return
         if (
             self._drag_start is not None
-            and self._drag_team_id is not None
+            and self._drag_group_id is not None
             and (event.pos() - self._drag_start).manhattanLength() > 5
         ):
             mime = QMimeData()
             payload = json.dumps({
-                "team_id": self._drag_team_id,
+                "team_id": self._drag_group_id,   # keep key for MIME compatibility
                 "from_block_id": self._block.block_id,
             }).encode("utf-8")
             mime.setData("application/x-team-chip", payload)
@@ -231,13 +242,13 @@ class BlockItem(QGraphicsObject):
             drag.exec(Qt.MoveAction)
 
             self._drag_start = None
-            self._drag_team_id = None
+            self._drag_group_id = None
         else:
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         self._drag_start = None
-        self._drag_team_id = None
+        self._drag_group_id = None
         super().mouseReleaseEvent(event)
 
     def dragEnterEvent(self, event):
@@ -247,27 +258,28 @@ class BlockItem(QGraphicsObject):
         if event.mimeData().hasFormat("application/x-team-chip"):
             try:
                 data = json.loads(bytes(event.mimeData().data("application/x-team-chip")).decode())
-                team_id = data.get("team_id")
+                group_id = data.get("team_id")
                 from_block_id = data.get("from_block_id")
 
                 if from_block_id == self._block.block_id:
-                    # Dropping onto same block — accept silently
                     self._highlight = "green"
                     self.update()
                     event.accept()
                     return
 
-                team = self._teams_by_id.get(team_id)
-                if team is None:
+                group = self._groups_by_id.get(group_id)
+                if group is None:
                     event.ignore()
                     return
 
                 current_used = self._used_seats()
-                # Team is already counted if it's being dragged from this block
-                if team_id in self._team_ids:
-                    current_used -= team.size
+                if group_id in [gid for gid, _ in self._group_chips]:
+                    existing_count = next(
+                        (c for gid, c in self._group_chips if gid == group_id), 0
+                    )
+                    current_used -= existing_count
 
-                fits = current_used + team.size <= self._block.capacity
+                fits = current_used + group.size <= self._block.capacity
                 self._highlight = "green" if fits else "red"
                 self.update()
                 if fits or self._allow_oversize:
@@ -291,7 +303,7 @@ class BlockItem(QGraphicsObject):
         if event.mimeData().hasFormat("application/x-team-chip"):
             try:
                 data = json.loads(bytes(event.mimeData().data("application/x-team-chip")).decode())
-                team_id = data.get("team_id")
+                group_id = data.get("team_id")
                 from_block_id = data.get("from_block_id")
                 to_block_id = self._block.block_id
 
@@ -303,7 +315,7 @@ class BlockItem(QGraphicsObject):
                     return
 
                 event.accept()
-                self.team_dropped.emit(team_id, from_block_id, to_block_id)
+                self.team_dropped.emit(group_id, from_block_id, to_block_id)
             except Exception:
                 event.ignore()
         else:

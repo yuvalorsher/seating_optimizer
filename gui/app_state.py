@@ -4,7 +4,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, QSettings, QStandardPaths
 
-from seating_optimizer.loader import load_office_map, load_teams, get_department_map
+from seating_optimizer.loader import (
+    load_office_map, load_employees, get_groups,
+    get_department_map, get_employees_by_group,
+)
 from seating_optimizer.persistence import list_solutions, load_solution
 from gui.constants import DEPT_COLORS, DEFAULT_COLOR
 
@@ -27,10 +30,12 @@ class AppState(QObject):
 
         # Data
         self.blocks: list = []
-        self.teams: list = []
-        self.teams_by_id: dict = {}
         self.blocks_by_id: dict = {}
-        self.dept_map: dict = {}
+        self.employees: list = []
+        self.groups: list = []
+        self.groups_by_id: dict = {}
+        self.employees_by_group: dict = {}   # {group_id: [Employee, ...]}
+        self.dept_map: dict = {}             # {dept: [group_id, ...]}
         self.solutions: list = []
         self.active_solution = None
         self.active_day: int = 1
@@ -38,17 +43,18 @@ class AppState(QObject):
         # Settings-backed paths
         self._settings = QSettings("SeatingOptimizer", "SeatingOptimizer")
         default_map = str(_bundled_data_path("office_map.csv"))
-        default_teams = str(_bundled_data_path("teams.json"))
+        default_employees = str(_bundled_data_path("Employees list for seating with fake department.csv"))
         self.office_map_path: str = self._settings.value("office_map_path", default_map)
-        self.teams_path: str = self._settings.value("teams_path", default_teams)
+        # Use new key; never fall back to old teams_path (different format)
+        self.employees_path: str = self._settings.value("employees_path", default_employees)
 
         # Solutions directory
         app_data = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
         self.solutions_dir = Path(app_data) / "solutions"
         self.solutions_dir.mkdir(parents=True, exist_ok=True)
 
-        # Dept color cache
-        self._dept_color_cache: dict[str, str] = {}
+        # Group color cache
+        self._group_color_cache: dict[str, str] = {}
 
         # Load data if paths exist
         self._load_solutions_from_disk()
@@ -61,21 +67,21 @@ class AppState(QObject):
         self.office_map_path = path
         self._settings.setValue("office_map_path", path)
 
-    def set_teams_path(self, path: str):
-        self.teams_path = path
-        self._settings.setValue("teams_path", path)
+    def set_employees_path(self, path: str):
+        self.employees_path = path
+        self._settings.setValue("employees_path", path)
 
     def load_data_files(self):
         self.blocks = load_office_map(self.office_map_path)
         self.blocks_by_id = {b.block_id: b for b in self.blocks}
-        self.teams = load_teams(self.teams_path)
-        self.teams_by_id = {t.team_id: t for t in self.teams}
-        self.dept_map = get_department_map(self.teams)
+        self.employees = load_employees(self.employees_path)
+        self.groups = get_groups(self.employees)
+        self.groups_by_id = {g.group_id: g for g in self.groups}
+        self.employees_by_group = get_employees_by_group(self.employees)
+        self.dept_map = get_department_map(self.groups)
 
     def _load_solutions_from_disk(self):
-        # Primary: app data dir (~/Library/Application Support/...)
         paths = list_solutions(self.solutions_dir)
-        # Fallback: local solutions/ dir (Streamlit-era files)
         local_dir = Path(__file__).parent.parent / "solutions"
         if local_dir != self.solutions_dir and local_dir.exists():
             seen = {p.name for p in paths}
@@ -90,11 +96,11 @@ class AppState(QObject):
             except Exception:
                 pass
 
-    def dept_color(self, department: str) -> str:
-        if department not in self._dept_color_cache:
-            idx = abs(hash(department)) % len(DEPT_COLORS)
-            self._dept_color_cache[department] = DEPT_COLORS[idx]
-        return self._dept_color_cache[department]
+    def group_color(self, group_id: str) -> str:
+        if group_id not in self._group_color_cache:
+            idx = abs(hash(group_id)) % len(DEPT_COLORS)
+            self._group_color_cache[group_id] = DEPT_COLORS[idx]
+        return self._group_color_cache[group_id]
 
     def _bundled_data_path(self, filename: str) -> Path:
         return _bundled_data_path(filename)

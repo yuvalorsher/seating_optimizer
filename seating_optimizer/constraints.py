@@ -6,6 +6,8 @@ from .models import DAYS
 # All C(4,2) = 6 cover-pair candidates
 ALL_COVER_PAIRS: list = list(combinations(DAYS, 2))
 
+MAX_COL_DISTANCE = 4   # maximum column distance between blocks used by the same group
+
 
 def valid_day_combos_for_cover_pair(cover_pair: tuple) -> list:
     """
@@ -17,11 +19,30 @@ def valid_day_combos_for_cover_pair(cover_pair: tuple) -> list:
     return [c for c in combinations(DAYS, 2) if c != excluded]
 
 
+def all_dept_day_assignments(cover_pair: tuple, depts: list) -> list:
+    """
+    Enumerate all ways to assign a common day (from cover_pair) to each dept.
+    Returns list of dicts {dept: day}.
+    With N depts and 2 cover days, yields 2^N combinations.
+    """
+    a, b = cover_pair
+    results = [{}]
+    for dept in depts:
+        new_results = []
+        for partial in results:
+            for day in (a, b):
+                new_partial = dict(partial)
+                new_partial[dept] = day
+                new_results.append(new_partial)
+        results = new_results
+    return results
+
+
 def check_cover_constraint(
     cover_pair: tuple,
-    day_assignments: dict,  # {team_id: (day_a, day_b)}
+    day_assignments: dict,   # {group_id: (day_a, day_b)}
 ) -> bool:
-    """Every team must attend at least one of the two cover days."""
+    """Every group must attend at least one of the two cover days."""
     a, b = cover_pair
     for days in day_assignments.values():
         if a not in days and b not in days:
@@ -29,28 +50,67 @@ def check_cover_constraint(
     return True
 
 
+def check_dept_overlap_constraint(
+    dept_map: dict,           # {dept: [group_id, ...]}
+    day_assignments: dict,    # {group_id: (day_a, day_b)}
+) -> bool:
+    """
+    For each dept, every pair of groups with members in that dept must share
+    at least one common day.
+    """
+    for dept, group_ids in dept_map.items():
+        present = [gid for gid in group_ids if gid in day_assignments]
+        for gid1, gid2 in combinations(present, 2):
+            days1 = set(day_assignments[gid1])
+            days2 = set(day_assignments[gid2])
+            if not days1 & days2:
+                return False
+    return True
+
+
 def check_capacity_constraint(
     day: int,
-    block_assignments_for_day: dict,   # {team_id: block_id}
-    teams_by_id: dict,
+    block_assignments_for_day: list,   # list[GroupBlockAssignment] for this day
     blocks_by_id: dict,
 ) -> bool:
-    """Sum of team sizes per block on a given day must not exceed capacity."""
+    """Sum of counts per block on a given day must not exceed capacity."""
     load: dict = {}
-    for team_id, block_id in block_assignments_for_day.items():
-        load[block_id] = load.get(block_id, 0) + teams_by_id[team_id].size
+    for ba in block_assignments_for_day:
+        load[ba.block_id] = load.get(ba.block_id, 0) + ba.count
     for block_id, used in load.items():
         if used > blocks_by_id[block_id].capacity:
             return False
     return True
 
 
+def check_column_distance_constraint(
+    block_assignments: list,   # all GroupBlockAssignment objects
+    blocks_by_id: dict,
+    max_col_dist: int = MAX_COL_DISTANCE,
+) -> bool:
+    """
+    For each (group, day), all blocks used by the group must be within
+    max_col_dist columns of each other.
+    """
+    from collections import defaultdict
+    group_day_cols: dict = defaultdict(set)
+    for ba in block_assignments:
+        col = blocks_by_id[ba.block_id].col
+        group_day_cols[(ba.group_id, ba.day)].add(col)
+
+    for (group_id, day), cols in group_day_cols.items():
+        if max(cols) - min(cols) > max_col_dist:
+            return False
+    return True
+
+
 def check_all_hard_constraints(
     cover_pair: tuple,
-    day_assignments: dict,              # {team_id: (day_a, day_b)}
-    block_assignments: dict,            # {(team_id, day): block_id}
-    teams_by_id: dict,
+    day_assignments: dict,       # {group_id: (day_a, day_b)}
+    block_assignments: list,     # list[GroupBlockAssignment]
+    groups_by_id: dict,
     blocks_by_id: dict,
+    dept_map: dict,
 ) -> tuple:
     """
     Run all hard constraint checks.
@@ -58,23 +118,27 @@ def check_all_hard_constraints(
     """
     violations = []
 
-    # Constraint: each team comes exactly 2 days
-    for team_id, days in day_assignments.items():
+    # Constraint: each group comes exactly 2 days
+    for group_id, days in day_assignments.items():
         if len(set(days)) != 2:
-            violations.append(f"Team {team_id} does not have exactly 2 distinct days: {days}")
+            violations.append(f"Group {group_id} does not have exactly 2 distinct days: {days}")
 
     # Constraint: cover pair
     if not check_cover_constraint(cover_pair, day_assignments):
-        violations.append(f"Cover constraint violated: not all teams attend cover days {cover_pair}")
+        violations.append(f"Cover constraint violated: not all groups attend cover days {cover_pair}")
+
+    # Constraint: dept overlap
+    if not check_dept_overlap_constraint(dept_map, day_assignments):
+        violations.append("Dept overlap constraint violated: some dept pair shares no day")
 
     # Constraint: capacity per day
     for day in DAYS:
-        day_block_map = {
-            team_id: block_id
-            for (team_id, d), block_id in block_assignments.items()
-            if d == day
-        }
-        if not check_capacity_constraint(day, day_block_map, teams_by_id, blocks_by_id):
+        day_bas = [ba for ba in block_assignments if ba.day == day]
+        if not check_capacity_constraint(day, day_bas, blocks_by_id):
             violations.append(f"Capacity constraint violated on day {day}")
+
+    # Constraint: column distance
+    if not check_column_distance_constraint(block_assignments, blocks_by_id):
+        violations.append("Column distance constraint violated: group members >4 columns apart")
 
     return (len(violations) == 0, violations)

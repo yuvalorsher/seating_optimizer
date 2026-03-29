@@ -1,11 +1,15 @@
 from __future__ import annotations
 import random
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from .models import DAYS, Block, Team, TeamDayAssignment, TeamBlockAssignment, Solution
-from .constraints import ALL_COVER_PAIRS, valid_day_combos_for_cover_pair
+from .models import DAYS, GroupDayAssignment, GroupBlockAssignment, Solution
+from .constraints import (
+    ALL_COVER_PAIRS, valid_day_combos_for_cover_pair,
+    all_dept_day_assignments, MAX_COL_DISTANCE,
+)
 from .scorer import compute_total_score
 from .loader import get_department_map
 
@@ -16,49 +20,114 @@ from .loader import get_department_map
 
 class DayAssigner:
     """
-    Assign each team to exactly 2 days, satisfying the cover constraint
-    by construction: every team's days include at least one of (A, B).
+    Assign each group to exactly 2 days, satisfying:
+    - Cover constraint (by construction, all common days are from the cover pair)
+    - Dept overlap: all groups in each dept share at least one day (via common day per dept)
     """
 
-    def __init__(self, teams: list, seed: Optional[int] = None):
-        self.teams = teams
-        self.rng = random.Random(seed)
+    def __init__(self, groups: list, rng: random.Random):
+        self.groups = groups
+        self.rng = rng
 
-    def assign(self, cover_pair: tuple) -> dict:
-        """Random uniform sampling from valid combos for each team."""
-        valid_combos = valid_day_combos_for_cover_pair(cover_pair)
-        return {t.team_id: self.rng.choice(valid_combos) for t in self.teams}
-
-    def assign_with_load_balance(self, cover_pair: tuple, blocks: list) -> dict:
+    def assign(self, cover_pair: tuple, dept_common_days: dict) -> Optional[dict]:
         """
-        Biased sampling: weight day combos by how much they balance the total
-        employee-days across days.  Falls back to assign() if teams list is empty.
+        Assign days to groups given dept_common_days {dept: day}.
+        All common days are from cover_pair, so cover constraint is auto-satisfied.
+
+        Returns {group_id: (day_a, day_b)} or None if infeasible.
         """
         valid_combos = valid_day_combos_for_cover_pair(cover_pair)
-        if not self.teams:
-            return {}
+        result = {}
 
-        # Greedy: pick combo that minimises the variance of load per day so far.
+        for group in self.groups:
+            # Mandatory days = union of common days for all depts this group has members in
+            mandatory = set()
+            for dept in group.departments:
+                if dept in dept_common_days:
+                    mandatory.add(dept_common_days[dept])
+
+            if len(mandatory) > 2:
+                return None   # group would need to attend 3+ days: impossible
+
+            if len(mandatory) == 2:
+                days = tuple(sorted(mandatory))
+                if days not in valid_combos:
+                    return None
+                result[group.group_id] = days
+
+            elif len(mandatory) == 1:
+                fixed = next(iter(mandatory))
+                eligible = [c for c in valid_combos if fixed in c]
+                if not eligible:
+                    return None
+                result[group.group_id] = self.rng.choice(eligible)
+
+            else:
+                # No dept constraint: pick any valid combo
+                result[group.group_id] = self.rng.choice(valid_combos)
+
+        return result
+
+    def assign_load_balanced(self, cover_pair: tuple, dept_common_days: dict) -> Optional[dict]:
+        """
+        Like assign(), but for free-choice groups, prefer combos that balance load.
+        """
+        valid_combos = valid_day_combos_for_cover_pair(cover_pair)
         result = {}
         day_load: dict = {d: 0 for d in DAYS}
 
-        for team in sorted(self.teams, key=lambda t: -t.size):
-            best_combo = None
-            best_cost = float("inf")
-            combos = list(valid_combos)
-            self.rng.shuffle(combos)
-            for combo in combos:
-                # Simulate adding this team to this combo
-                trial = dict(day_load)
-                for d in combo:
-                    trial[d] += team.size
-                variance = _variance(list(trial.values()))
-                if variance < best_cost:
-                    best_cost = variance
-                    best_combo = combo
-            result[team.team_id] = best_combo
-            for d in best_combo:
-                day_load[d] += team.size
+        for group in sorted(self.groups, key=lambda g: -g.size):
+            mandatory = set()
+            for dept in group.departments:
+                if dept in dept_common_days:
+                    mandatory.add(dept_common_days[dept])
+
+            if len(mandatory) > 2:
+                return None
+
+            if len(mandatory) == 2:
+                days = tuple(sorted(mandatory))
+                if days not in valid_combos:
+                    return None
+                result[group.group_id] = days
+                for d in days:
+                    day_load[d] += group.size
+
+            elif len(mandatory) == 1:
+                fixed = next(iter(mandatory))
+                eligible = [c for c in valid_combos if fixed in c]
+                if not eligible:
+                    return None
+                combos = list(eligible)
+                self.rng.shuffle(combos)
+                best, best_cost = None, float("inf")
+                for combo in combos:
+                    trial = dict(day_load)
+                    for d in combo:
+                        trial[d] += group.size
+                    cost = _variance(list(trial.values()))
+                    if cost < best_cost:
+                        best_cost = cost
+                        best = combo
+                result[group.group_id] = best
+                for d in best:
+                    day_load[d] += group.size
+
+            else:
+                combos = list(valid_combos)
+                self.rng.shuffle(combos)
+                best, best_cost = None, float("inf")
+                for combo in combos:
+                    trial = dict(day_load)
+                    for d in combo:
+                        trial[d] += group.size
+                    cost = _variance(list(trial.values()))
+                    if cost < best_cost:
+                        best_cost = cost
+                        best = combo
+                result[group.group_id] = best
+                for d in best:
+                    day_load[d] += group.size
 
         return result
 
@@ -69,163 +138,162 @@ class DayAssigner:
 
 class SeatingAssigner:
     """
-    Bin-pack teams into blocks for a single day, with department-grouping
-    preference.
+    Bin-pack groups into blocks for a single day, keeping each group together
+    (in one block if possible, else in adjacent blocks within MAX_COL_DISTANCE columns).
     """
 
-    def __init__(self, blocks: list, teams_by_id: dict):
+    def __init__(self, blocks: list):
         self.blocks = blocks
         self.blocks_by_id = {b.block_id: b for b in blocks}
-        self.teams_by_id = teams_by_id
+        # Pre-compute column groups: sets of blocks all within MAX_COL_DISTANCE of each other
+        self._col_groups = _compute_column_groups(blocks, MAX_COL_DISTANCE)
 
     def assign_day(
         self,
-        day: int,
-        teams_on_day: list,                   # [team_id, ...]
-        dept_map: dict,                        # {dept: [Team, ...]}
-        preferred_blocks: Optional[dict] = None,  # {team_id: block_id} hints
-    ) -> Optional[dict]:
+        groups_on_day: list,            # [Group, ...]
+        preferred_assignments: Optional[dict] = None,   # {group_id: [(block_id, count), ...]}
+    ) -> Optional[list]:
         """
-        Returns {team_id: block_id} for all teams on this day, or None if
-        infeasible.
+        Returns list[GroupBlockAssignment] for all groups on this day, or None if infeasible.
+        preferred_assignments: hints from consistency reconciler (anchors).
         """
-        if not teams_on_day:
-            return {}
+        if not groups_on_day:
+            return []
 
         current_load: dict = {b.block_id: 0 for b in self.blocks}
-        assignment: dict = {}
+        result: list = []   # [GroupBlockAssignment]
 
-        # If preferred_blocks provided, try to satisfy them first as anchors
-        if preferred_blocks:
-            for team_id in list(teams_on_day):
-                pref = preferred_blocks.get(team_id)
-                if pref and pref in current_load:
-                    team = self.teams_by_id[team_id]
-                    if current_load[pref] + team.size <= self.blocks_by_id[pref].capacity:
-                        assignment[team_id] = pref
-                        current_load[pref] += team.size
+        # Apply preferred assignments first (anchors from consistency reconciler)
+        remaining_groups = list(groups_on_day)
+        if preferred_assignments:
+            still_remaining = []
+            for group in groups_on_day:
+                pref = preferred_assignments.get(group.group_id)
+                if pref is not None:
+                    # Check if preferred assignment fits
+                    fits = all(
+                        current_load[block_id] + count <= self.blocks_by_id[block_id].capacity
+                        for block_id, count in pref
+                        if block_id in self.blocks_by_id
+                    )
+                    if fits and all(block_id in self.blocks_by_id for block_id, _ in pref):
+                        for block_id, count in pref:
+                            result.append(GroupBlockAssignment(
+                                group_id=group.group_id,
+                                day=0,  # day filled in by caller
+                                block_id=block_id,
+                                count=count,
+                            ))
+                            current_load[block_id] += count
+                        continue
+                still_remaining.append(group)
+            remaining_groups = still_remaining
 
-        remaining = [tid for tid in teams_on_day if tid not in assignment]
+        # Sort remaining groups by size descending (pack largest first)
+        remaining_groups.sort(key=lambda g: -g.size)
 
-        # Group remaining by dept, sort dept groups by total size DESC
-        dept_groups: dict = {}
-        for team_id in remaining:
-            dept = self.teams_by_id[team_id].department
-            dept_groups.setdefault(dept, []).append(self.teams_by_id[team_id])
+        for group in remaining_groups:
+            assignment = self._place_group(group, current_load)
+            if assignment is None:
+                return None   # infeasible
 
-        sorted_groups = sorted(
-            dept_groups.values(),
-            key=lambda g: sum(t.size for t in g),
-            reverse=True,
-        )
-
-        for group in sorted_groups:
-            group_size = sum(t.size for t in group)
-
-            # Attempt 1: fit entire dept in one block
-            result = self._try_fit_dept_group(group, current_load)
-            if result is not None:
-                for team_id, block_id in result.items():
-                    assignment[team_id] = block_id
-                    current_load[block_id] += self.teams_by_id[team_id].size
-            else:
-                # Attempt 2: greedy split
-                result = self._greedy_split(group, current_load)
-                if result is None:
-                    return None  # infeasible
-                for team_id, block_id in result.items():
-                    assignment[team_id] = block_id
-                    current_load[block_id] += self.teams_by_id[team_id].size
-
-        # Local swap pass to improve dept cohesion
-        assignment = self._local_swap_pass(assignment, current_load, dept_map)
-        return assignment
-
-    def _try_fit_dept_group(
-        self,
-        teams: list,
-        current_load: dict,
-        exclude_blocks: Optional[set] = None,
-    ) -> Optional[dict]:
-        """Try to place all teams in a single block. Return mapping or None."""
-        group_size = sum(t.size for t in teams)
-        candidates = [
-            b for b in self.blocks
-            if (exclude_blocks is None or b.block_id not in exclude_blocks)
-            and b.capacity - current_load[b.block_id] >= group_size
-        ]
-        if not candidates:
-            return None
-        # Tightest fit: minimise wasted space
-        best = min(candidates, key=lambda b: b.capacity - current_load[b.block_id] - group_size)
-        return {t.team_id: best.block_id for t in teams}
-
-    def _greedy_split(self, teams: list, current_load: dict) -> Optional[dict]:
-        """Place teams largest-first into the most available block."""
-        sorted_teams = sorted(teams, key=lambda t: t.size, reverse=True)
-        result = {}
-        load = dict(current_load)  # local copy
-
-        for team in sorted_teams:
-            eligible = [
-                b for b in self.blocks
-                if b.capacity - load[b.block_id] >= team.size
-            ]
-            if not eligible:
-                return None
-            # Prefer block with most remaining space (leaves room for remaining)
-            chosen = max(eligible, key=lambda b: b.capacity - load[b.block_id])
-            result[team.team_id] = chosen.block_id
-            load[chosen.block_id] += team.size
+            for block_id, count in assignment:
+                result.append(GroupBlockAssignment(
+                    group_id=group.group_id,
+                    day=0,   # day filled in by caller
+                    block_id=block_id,
+                    count=count,
+                ))
+                current_load[block_id] += count
 
         return result
 
-    def _local_swap_pass(
-        self,
-        assignment: dict,
-        current_load: dict,
-        dept_map: dict,
-    ) -> dict:
+    def _place_group(self, group, current_load: dict) -> Optional[list]:
         """
-        Try pairwise swaps between teams in different blocks that would improve
-        dept cohesion, without violating capacity.  Repeat until no improvement.
+        Try to place a group. Returns [(block_id, count), ...] or None.
+        Attempts: (1) single block, (2) split within each column group.
         """
-        improved = True
-        load = dict(current_load)
-        team_ids = list(assignment.keys())
+        # Attempt 1: fit in a single block (tightest fit)
+        candidates = [
+            b for b in self.blocks
+            if b.capacity - current_load[b.block_id] >= group.size
+        ]
+        if candidates:
+            best = min(candidates, key=lambda b: b.capacity - current_load[b.block_id] - group.size)
+            return [(best.block_id, group.size)]
 
-        while improved:
-            improved = False
-            for i in range(len(team_ids)):
-                for j in range(i + 1, len(team_ids)):
-                    t1 = self.teams_by_id[team_ids[i]]
-                    t2 = self.teams_by_id[team_ids[j]]
-                    b1 = assignment[t1.team_id]
-                    b2 = assignment[t2.team_id]
-                    if b1 == b2:
-                        continue
-                    # Same-dept swaps never change cohesion (one leaves, one arrives,
-                    # net count per block unchanged) but the gain formula spuriously
-                    # returns >0, causing an infinite loop. Skip them.
-                    if t1.department == t2.department:
-                        continue
-                    # Check if swap is capacity-feasible
-                    if (
-                        load[b1] - t1.size + t2.size <= self.blocks_by_id[b1].capacity
-                        and load[b2] - t2.size + t1.size <= self.blocks_by_id[b2].capacity
-                    ):
-                        gain = _dept_cohesion_gain(
-                            t1, t2, b1, b2, assignment, self.teams_by_id
-                        )
-                        if gain > 0:
-                            # Apply swap
-                            assignment[t1.team_id] = b2
-                            assignment[t2.team_id] = b1
-                            load[b1] = load[b1] - t1.size + t2.size
-                            load[b2] = load[b2] - t2.size + t1.size
-                            improved = True
+        # Attempt 2: split across a column group
+        for col_group in self._col_groups:
+            avail_total = sum(
+                b.capacity - current_load[b.block_id] for b in col_group
+            )
+            if avail_total < group.size:
+                continue
 
-        return assignment
+            # Greedily fill blocks in this column group (most space first)
+            assignment = _fill_column_group(group.size, col_group, current_load)
+            if assignment is not None:
+                return assignment
+
+        return None   # infeasible
+
+
+def _compute_column_groups(blocks: list, max_col_dist: int) -> list:
+    """
+    Return a list of block groups where within each group, all blocks are
+    within max_col_dist columns of each other.
+    Groups are ordered by total capacity descending (best first).
+    """
+    sorted_cols = sorted(set(b.col for b in blocks))
+    block_by_col: dict = defaultdict(list)
+    for b in blocks:
+        block_by_col[b.col].append(b)
+
+    # Greedy grouping: extend current group while next column is within range
+    groups = []
+    current_min_col = sorted_cols[0]
+    current_blocks = list(block_by_col[sorted_cols[0]])
+
+    for col in sorted_cols[1:]:
+        if col - current_min_col <= max_col_dist:
+            current_blocks.extend(block_by_col[col])
+        else:
+            groups.append(list(current_blocks))
+            current_min_col = col
+            current_blocks = list(block_by_col[col])
+
+    groups.append(current_blocks)
+
+    # Sort groups by total capacity descending so we try the best option first
+    groups.sort(key=lambda g: sum(b.capacity for b in g), reverse=True)
+    return groups
+
+
+def _fill_column_group(size: int, col_group: list, current_load: dict) -> Optional[list]:
+    """
+    Greedily fill blocks in a column group to seat 'size' employees.
+    Returns [(block_id, count), ...] or None.
+    """
+    remaining = size
+    result = []
+    sorted_blocks = sorted(
+        col_group,
+        key=lambda b: b.capacity - current_load[b.block_id],
+        reverse=True,
+    )
+    for b in sorted_blocks:
+        avail = b.capacity - current_load[b.block_id]
+        if avail <= 0:
+            continue
+        take = min(remaining, avail)
+        result.append((b.block_id, take))
+        remaining -= take
+        if remaining == 0:
+            break
+
+    if remaining > 0:
+        return None
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -234,65 +302,70 @@ class SeatingAssigner:
 
 class ConsistencyReconciler:
     """
-    Post-process block_assignments to maximise teams that use the same
-    block on both their days.
+    Post-process block_assignments to maximise groups that use the same
+    block(s) on both their days.  Only operates on single-block groups.
     """
 
     def reconcile(
         self,
-        day_assignments: dict,       # {team_id: (d1, d2)}
-        block_assignments: dict,     # {(team_id, day): block_id}
-        teams_by_id: dict,
+        day_assignments: dict,       # {group_id: (d1, d2)}
+        block_assignments: list,     # list[GroupBlockAssignment]
+        groups_by_id: dict,
         blocks_by_id: dict,
-    ) -> dict:
-        """Returns updated block_assignments."""
-        ba = dict(block_assignments)
+    ) -> list:
+        """Returns updated block_assignments list."""
+        # Build mutable load map per (block_id, day)
+        load: dict = defaultdict(int)
+        for ba in block_assignments:
+            load[(ba.block_id, ba.day)] += ba.count
 
-        # Compute current load per (block, day)
-        load: dict = {}  # {(block_id, day): seats_used}
-        for block in blocks_by_id.values():
-            for day in DAYS:
-                load[(block.block_id, day)] = 0
-        for (team_id, day), block_id in ba.items():
-            load[(block_id, day)] = load.get((block_id, day), 0) + teams_by_id[team_id].size
+        bas = list(block_assignments)
 
         improved = True
         while improved:
             improved = False
-            for team_id, (d1, d2) in day_assignments.items():
-                b1 = ba.get((team_id, d1))
-                b2 = ba.get((team_id, d2))
-                if b1 is None or b2 is None or b1 == b2:
+            for group_id, (d1, d2) in day_assignments.items():
+                blocks_d1 = [(ba.block_id, ba.count) for ba in bas
+                             if ba.group_id == group_id and ba.day == d1]
+                blocks_d2 = [(ba.block_id, ba.count) for ba in bas
+                             if ba.group_id == group_id and ba.day == d2]
+
+                # Only process single-block groups
+                if len(blocks_d1) != 1 or len(blocks_d2) != 1:
                     continue
 
-                team_size = teams_by_id[team_id].size
+                b1, count1 = blocks_d1[0]
+                b2, count2 = blocks_d2[0]
 
-                # Try to move team to b1 on d2
-                avail_b1_d2 = (
-                    blocks_by_id[b1].capacity
-                    - load.get((b1, d2), 0)
-                )
-                if avail_b1_d2 >= team_size:
+                if b1 == b2:
+                    continue
+
+                group_size = count1  # == count2 for single-block groups
+
+                # Try to move to b1 on d2
+                avail_b1_d2 = blocks_by_id[b1].capacity - load[(b1, d2)]
+                if avail_b1_d2 >= group_size:
                     # Apply: release b2 on d2, take b1 on d2
-                    load[(b2, d2)] -= team_size
-                    load[(b1, d2)] = load.get((b1, d2), 0) + team_size
-                    ba[(team_id, d2)] = b1
+                    load[(b2, d2)] -= group_size
+                    load[(b1, d2)] += group_size
+                    for ba in bas:
+                        if ba.group_id == group_id and ba.day == d2:
+                            ba.block_id = b1
                     improved = True
                     continue
 
-                # Try to move team to b2 on d1
-                avail_b2_d1 = (
-                    blocks_by_id[b2].capacity
-                    - load.get((b2, d1), 0)
-                )
-                if avail_b2_d1 >= team_size:
-                    load[(b1, d1)] -= team_size
-                    load[(b2, d1)] = load.get((b2, d1), 0) + team_size
-                    ba[(team_id, d1)] = b2
+                # Try to move to b2 on d1
+                avail_b2_d1 = blocks_by_id[b2].capacity - load[(b2, d1)]
+                if avail_b2_d1 >= group_size:
+                    load[(b1, d1)] -= group_size
+                    load[(b2, d1)] += group_size
+                    for ba in bas:
+                        if ba.group_id == group_id and ba.day == d1:
+                            ba.block_id = b2
                     improved = True
                     continue
 
-        return ba
+        return bas
 
 
 # ---------------------------------------------------------------------------
@@ -305,16 +378,16 @@ class Solver:
     def __init__(
         self,
         blocks: list,
-        teams: list,
+        groups: list,
         n_solutions: int = 5,
         max_iterations_per_cover: int = 200,
         seed: Optional[int] = None,
     ):
         self.blocks = blocks
         self.blocks_by_id = {b.block_id: b for b in blocks}
-        self.teams = teams
-        self.teams_by_id = {t.team_id: t for t in teams}
-        self.dept_map = get_department_map(teams)
+        self.groups = groups
+        self.groups_by_id = {g.group_id: g for g in groups}
+        self.dept_map = get_department_map(groups)
         self.n_solutions = n_solutions
         self.max_iterations = max_iterations_per_cover
         self.rng = random.Random(seed)
@@ -324,108 +397,116 @@ class Solver:
         """
         Main entry point. Returns list[Solution] (up to n_solutions),
         sorted by score descending.
-
-        progress_callback(iteration, total) called each iteration if provided.
         """
         pool: list = []
         seen_signatures: set = set()
+        depts = list(self.dept_map.keys())
 
-        total_iters = len(ALL_COVER_PAIRS) * self.max_iterations
+        # Outer iterations: cover_pairs × dept_day_combos × random seeds
+        # For each (cover_pair, dept_day_combo), do a small number of seating iterations
+        iters_per_dept_combo = max(4, self.max_iterations // max(1, 2 ** len(depts)))
+        total_iters = len(ALL_COVER_PAIRS) * (2 ** len(depts)) * iters_per_dept_combo
+        done_count = 0
 
         for cover_pair in ALL_COVER_PAIRS:
-            if len(pool) >= self.n_solutions * 3:
-                break  # have plenty of candidates
-            assigner = DayAssigner(self.teams, seed=self.rng.randint(0, 10**9))
-            seating = SeatingAssigner(self.blocks, self.teams_by_id)
-            reconciler = ConsistencyReconciler()
+            dept_combos = all_dept_day_assignments(cover_pair, depts)
 
-            for iteration in range(self.max_iterations):
-                if progress_callback:
-                    done = (ALL_COVER_PAIRS.index(cover_pair) * self.max_iterations + iteration)
-                    progress_callback(done, total_iters)
-
-                # Phase 1 — day assignment
-                if iteration < self.max_iterations // 2:
-                    day_assignments = assigner.assign(cover_pair)
-                else:
-                    day_assignments = assigner.assign_with_load_balance(cover_pair, self.blocks)
-
-                # Phase 2 — seating per day
-                block_assignments: dict = {}
-                feasible = True
-                for day in DAYS:
-                    teams_on_day = self._collect_teams_for_day(day, day_assignments)
-                    day_result = seating.assign_day(day, teams_on_day, self.dept_map)
-                    if day_result is None:
-                        feasible = False
-                        break
-                    for team_id, block_id in day_result.items():
-                        block_assignments[(team_id, day)] = block_id
-
-                if not feasible:
-                    continue
-
-                # Phase 3 — consistency reconciliation
-                block_assignments = reconciler.reconcile(
-                    day_assignments, block_assignments, self.teams_by_id, self.blocks_by_id
-                )
-
-                # Score
-                score, breakdown = compute_total_score(
-                    day_assignments, block_assignments,
-                    self.teams_by_id, self.blocks_by_id, self.dept_map
-                )
-
-                sig = _solution_signature(day_assignments, block_assignments)
-                if sig in seen_signatures:
-                    continue
-                seen_signatures.add(sig)
-
-                sol = self._build_solution(
-                    cover_pair, day_assignments, block_assignments,
-                    score, breakdown,
-                    seed=self.rng.randint(0, 10**9),
-                    iteration=iteration,
-                )
-                pool.append(sol)
-
-                if len(pool) >= self.n_solutions * 10:
+            for dept_day_combo in dept_combos:
+                if len(pool) >= self.n_solutions * 3:
                     break
+
+                assigner = DayAssigner(self.groups, self.rng)
+                seating = SeatingAssigner(self.blocks)
+                reconciler = ConsistencyReconciler()
+
+                for iteration in range(iters_per_dept_combo):
+                    if progress_callback:
+                        progress_callback(done_count, total_iters)
+                    done_count += 1
+
+                    # Phase 1 — day assignment
+                    if iteration < iters_per_dept_combo // 2:
+                        day_assignments = assigner.assign(cover_pair, dept_day_combo)
+                    else:
+                        day_assignments = assigner.assign_load_balanced(
+                            cover_pair, dept_day_combo
+                        )
+
+                    if day_assignments is None:
+                        continue   # this dept_day_combo is infeasible for some group
+
+                    # Phase 2 — seating per day
+                    all_bas: list = []
+                    feasible = True
+                    for day in DAYS:
+                        groups_on_day = [
+                            self.groups_by_id[gid]
+                            for gid, days in day_assignments.items()
+                            if day in days
+                        ]
+                        day_result = seating.assign_day(groups_on_day)
+                        if day_result is None:
+                            feasible = False
+                            break
+                        # Set the day on each assignment
+                        for ba in day_result:
+                            ba.day = day
+                        all_bas.extend(day_result)
+
+                    if not feasible:
+                        continue
+
+                    # Phase 3 — consistency reconciliation
+                    all_bas = reconciler.reconcile(
+                        day_assignments, all_bas, self.groups_by_id, self.blocks_by_id
+                    )
+
+                    # Score
+                    score, breakdown = compute_total_score(day_assignments, all_bas)
+
+                    sig = _solution_signature(day_assignments, all_bas)
+                    if sig in seen_signatures:
+                        continue
+                    seen_signatures.add(sig)
+
+                    sol = self._build_solution(
+                        cover_pair, day_assignments, all_bas,
+                        score, breakdown, iteration,
+                    )
+                    pool.append(sol)
+
+                    if len(pool) >= self.n_solutions * 10:
+                        break
+
+            if len(pool) >= self.n_solutions * 3:
+                break
 
         pool.sort(key=lambda s: s.score, reverse=True)
         return pool[: self.n_solutions]
-
-    def _collect_teams_for_day(self, day: int, day_assignments: dict) -> list:
-        return [tid for tid, days in day_assignments.items() if day in days]
 
     def _build_solution(
         self,
         cover_pair: tuple,
         day_assignments: dict,
-        block_assignments: dict,
+        block_assignments: list,
         score: float,
         score_breakdown: dict,
-        seed: int,
         iteration: int,
     ) -> Solution:
         da_list = [
-            TeamDayAssignment(team_id=tid, days=days)
-            for tid, days in day_assignments.items()
-        ]
-        ba_list = [
-            TeamBlockAssignment(team_id=tid, day=day, block_id=block_id)
-            for (tid, day), block_id in block_assignments.items()
+            GroupDayAssignment(group_id=gid, days=days)
+            for gid, days in day_assignments.items()
         ]
         return Solution(
             solution_id=str(uuid.uuid4())[:8],
             created_at=datetime.now(timezone.utc).isoformat(),
             cover_pair=cover_pair,
             day_assignments=da_list,
-            block_assignments=ba_list,
+            block_assignments=list(block_assignments),
             score=score,
             score_breakdown=score_breakdown,
             metadata={
-                "solver_seed": seed,
+                "solver_seed": self.rng.randint(0, 10 ** 9),
                 "cover_pair_tried": list(cover_pair),
                 "iteration": iteration,
                 "derived_from": None,
@@ -444,29 +525,17 @@ def _variance(values: list) -> float:
     return sum((v - mean) ** 2 for v in values) / len(values)
 
 
-def _dept_cohesion_gain(
-    t1, t2, b1: str, b2: str, assignment: dict, teams_by_id: dict
-) -> int:
-    """
-    Count how many same-dept teammates t1 gains in b2 (and t2 in b1),
-    minus what each loses.  Positive = beneficial swap.
-    """
-    def same_dept_count(team, target_block, assignment, teams_by_id):
-        return sum(
-            1 for tid, bid in assignment.items()
-            if bid == target_block
-            and teams_by_id[tid].department == team.department
-            and tid != team.team_id
-        )
-
-    t1_gain = same_dept_count(t1, b2, assignment, teams_by_id) - same_dept_count(t1, b1, assignment, teams_by_id)
-    t2_gain = same_dept_count(t2, b1, assignment, teams_by_id) - same_dept_count(t2, b2, assignment, teams_by_id)
-    return t1_gain + t2_gain
-
-
-def _solution_signature(day_assignments: dict, block_assignments: dict) -> frozenset:
+def _solution_signature(day_assignments: dict, block_assignments: list) -> frozenset:
     """Canonical fingerprint to detect duplicate solutions."""
-    return frozenset(
-        (tid, days, block_assignments.get((tid, days[0])), block_assignments.get((tid, days[1])))
-        for tid, days in day_assignments.items()
-    )
+    # For each group: (group_id, days, frozenset of (block_id, count) per day)
+    group_day_blocks: dict = defaultdict(dict)
+    for ba in block_assignments:
+        group_day_blocks[ba.group_id].setdefault(ba.day, []).append((ba.block_id, ba.count))
+
+    parts = []
+    for gid, days in day_assignments.items():
+        d1_blocks = frozenset(group_day_blocks[gid].get(days[0], []))
+        d2_blocks = frozenset(group_day_blocks[gid].get(days[1], []))
+        parts.append((gid, days, d1_blocks, d2_blocks))
+
+    return frozenset(parts)

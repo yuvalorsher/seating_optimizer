@@ -1,9 +1,9 @@
 from __future__ import annotations
 import csv
-import json
+import re
 from pathlib import Path
 
-from .models import Block, Team
+from .models import Block, Employee, Group
 
 
 def load_office_map(path: str) -> list:
@@ -29,28 +29,70 @@ def load_office_map(path: str) -> list:
     return blocks
 
 
-def load_teams(path: str) -> list:
-    """
-    Parse teams.json.
-    Expected format: {"t1": {"name": "T1", "size": 5, "department": "D1"}, ...}
-    Returns list[Team].
-    """
-    with open(path) as f:
-        raw = json.load(f)
-    teams = []
-    for team_id, data in raw.items():
-        teams.append(Team(
-            team_id=team_id,
-            name=data["name"],
-            department=data["department"],
-            size=int(data["size"]),
-        ))
-    return teams
+def _slugify(name: str) -> str:
+    """Convert a name to a safe identifier (lowercase, underscores)."""
+    return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
 
 
-def get_department_map(teams: list) -> dict:
-    """Return {dept_id: [Team, ...]} grouping."""
+def load_employees(path: str) -> list:
+    """
+    Parse an employee CSV file.
+    Required columns: Display name, Group, Department.
+    Returns list[Employee].
+    """
+    employees = []
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for i, row in enumerate(reader):
+            name = row["Display name"].strip()
+            group = row["Group"].strip()
+            department = row["Department"].strip()
+            if not name:
+                continue
+            employees.append(Employee(
+                employee_id=f"e{i}_{_slugify(name)}",
+                name=name,
+                group_id=group,   # keep original group name as ID
+                department=department,
+            ))
+    return employees
+
+
+def get_groups(employees: list) -> list:
+    """
+    Aggregate employees by group → list[Group].
+    """
+    group_data: dict = {}  # group_id -> {"size": int, "depts": set}
+    for emp in employees:
+        gid = emp.group_id
+        if gid not in group_data:
+            group_data[gid] = {"size": 0, "depts": set()}
+        group_data[gid]["size"] += 1
+        group_data[gid]["depts"].add(emp.department)
+
+    return [
+        Group(
+            group_id=gid,
+            name=gid,
+            size=data["size"],
+            departments=frozenset(data["depts"]),
+        )
+        for gid, data in group_data.items()
+    ]
+
+
+def get_department_map(groups: list) -> dict:
+    """Return {dept: [group_id, ...]} for groups with members in each dept."""
     dept_map: dict = {}
-    for team in teams:
-        dept_map.setdefault(team.department, []).append(team)
+    for group in groups:
+        for dept in group.departments:
+            dept_map.setdefault(dept, []).append(group.group_id)
     return dept_map
+
+
+def get_employees_by_group(employees: list) -> dict:
+    """Return {group_id: [Employee, ...]}."""
+    result: dict = {}
+    for emp in employees:
+        result.setdefault(emp.group_id, []).append(emp)
+    return result

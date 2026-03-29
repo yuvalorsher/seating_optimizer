@@ -5,7 +5,6 @@ from PySide6.QtGui import QPainter, QColor, QBrush, QWheelEvent
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem
 
 from seating_optimizer.scorer import compute_total_score
-from seating_optimizer.loader import get_department_map
 
 from gui.constants import CELL_W, CELL_H, CELL_GAP
 from gui.widgets.block_item import BlockItem
@@ -16,7 +15,7 @@ _ZOOM_MAX = 5.0
 
 
 class OfficeGridView(QGraphicsView):
-    team_moved = Signal(str, str, str, int)  # team_id, from_block_id, to_block_id, day
+    team_moved = Signal(str, str, str, int)  # group_id, from_block_id, to_block_id, day
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -25,9 +24,10 @@ class OfficeGridView(QGraphicsView):
         self._solution = None
         self._day = 1
         self._blocks: list = []
-        self._teams_by_id: dict = {}
+        self._groups_by_id: dict = {}
         self._blocks_by_id: dict = {}
-        self._dept_color_fn = None
+        self._employees_by_group: dict = {}
+        self._group_color_fn = None
         self._block_items: dict[str, BlockItem] = {}
         self._read_only = False
         self._allow_oversize = False
@@ -36,7 +36,7 @@ class OfficeGridView(QGraphicsView):
 
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.NoDrag)
-        self.setAcceptDrops(True)  # required for item-level drop events to fire
+        self.setAcceptDrops(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setBackgroundBrush(QBrush(QColor("#f0f2f5")))
@@ -44,13 +44,22 @@ class OfficeGridView(QGraphicsView):
     def set_read_only(self, read_only: bool):
         self._read_only = read_only
 
-    def load(self, solution, day: int, blocks: list, teams_by_id: dict, dept_color_fn=None):
+    def load(
+        self,
+        solution,
+        day: int,
+        blocks: list,
+        groups_by_id: dict,
+        group_color_fn=None,
+        employees_by_group: dict = None,
+    ):
         self._solution = solution
         self._day = day
         self._blocks = blocks
-        self._teams_by_id = teams_by_id
+        self._groups_by_id = groups_by_id
         self._blocks_by_id = {b.block_id: b for b in blocks}
-        self._dept_color_fn = dept_color_fn
+        self._group_color_fn = group_color_fn
+        self._employees_by_group = employees_by_group or {}
         self._rebuild_scene()
 
     def reload_day(self, day: int):
@@ -91,12 +100,11 @@ class OfficeGridView(QGraphicsView):
         grid_rows = max(b.row for b in self._blocks) + 1
         grid_cols = max(b.col for b in self._blocks) + 1
 
-        # Map from (row, col) to block
         block_map: dict[tuple, object] = {
             (b.row, b.col): b for b in self._blocks
         }
 
-        # Get day view
+        # day_view: {block_id: [(group_id, count), ...]}
         day_view = self._solution.get_day_view(self._day)
 
         for row in range(grid_rows):
@@ -108,19 +116,19 @@ class OfficeGridView(QGraphicsView):
                     block = block_map[(row, col)]
                     item = BlockItem(
                         block,
-                        self._teams_by_id,
-                        self._dept_color_fn or (lambda d: "#888888"),
+                        self._groups_by_id,
+                        self._group_color_fn or (lambda g: "#888888"),
+                        employees_by_group=self._employees_by_group,
                         read_only=self._read_only,
                         allow_oversize=self._allow_oversize,
                     )
                     item.setPos(x, y)
-                    team_ids = day_view.get(block.block_id, [])
-                    item.set_teams(team_ids)
-                    item.team_dropped.connect(self._on_team_dropped)
+                    group_chips = day_view.get(block.block_id, [])
+                    item.set_groups(group_chips)
+                    item.team_dropped.connect(self._on_group_dropped)
                     self._scene.addItem(item)
                     self._block_items[block.block_id] = item
                 else:
-                    # Empty cell placeholder
                     rect_item = QGraphicsRectItem(0, 0, CELL_W, CELL_H)
                     rect_item.setBrush(QBrush(QColor("#dde1e7")))
                     rect_item.setPen(Qt.NoPen)
@@ -130,20 +138,38 @@ class OfficeGridView(QGraphicsView):
         total_w = grid_cols * (CELL_W + CELL_GAP) - CELL_GAP
         total_h = grid_rows * (CELL_H + CELL_GAP) - CELL_GAP
         self._scene.setSceneRect(0, 0, total_w, total_h)
-        # Defer fitInView so it runs after the widget is laid out and visible
         QTimer.singleShot(0, self._fit_in_view)
 
     def _fit_in_view(self):
         if not self._user_zoomed and self._scene.sceneRect().isValid():
             self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
-            # Track resulting scale so zoom_in/out starts from the right baseline
             t = self.transform()
             self._current_scale = t.m11()
 
-    def highlight_for_team(self, team_id: str, day: int):
-        """Color every block green (fits) or red (over capacity) for this team/day."""
-        team = self._teams_by_id.get(team_id)
-        if team is None:
+    def _on_group_dropped(self, group_id: str, from_block_id: str, to_block_id: str):
+        if self._solution is None:
+            return
+
+        # Mutate block_assignments in-place: move all (group_id, day) entries
+        # for this group from from_block_id to to_block_id on the current day.
+        for ba in self._solution.block_assignments:
+            if ba.group_id == group_id and ba.day == self._day and ba.block_id == from_block_id:
+                ba.block_id = to_block_id
+                break
+
+        # Recompute score
+        day_assignments = {da.group_id: da.days for da in self._solution.day_assignments}
+        score, breakdown = compute_total_score(day_assignments, self._solution.block_assignments)
+        self._solution.score = score
+        self._solution.score_breakdown = breakdown
+
+        self._rebuild_scene()
+        self.team_moved.emit(group_id, from_block_id, to_block_id, self._day)
+
+    def highlight_for_group(self, group_id: str, day: int):
+        """Color every block green (fits) or red (over capacity) for this group/day."""
+        group = self._groups_by_id.get(group_id)
+        if group is None:
             self.clear_highlights()
             return
         day_view = self._solution.get_day_view(day) if self._solution else {}
@@ -152,47 +178,15 @@ class OfficeGridView(QGraphicsView):
             if block is None:
                 continue
             occupied = sum(
-                self._teams_by_id[tid].size
-                for tid in day_view.get(block_id, [])
-                if tid in self._teams_by_id
+                count for gid, count in day_view.get(block_id, [])
+                if gid != group_id
             )
-            # Don't double-count if team is already in this block
-            if team_id in day_view.get(block_id, []):
-                occupied -= team.size
-            fits = (occupied + team.size) <= block.capacity
+            fits = (occupied + group.size) <= block.capacity
             item.set_external_highlight("green" if fits else "red")
 
     def clear_highlights(self):
-        """Remove all external highlights."""
         for item in self._block_items.values():
             item.set_external_highlight(None)
-
-    def _on_team_dropped(self, team_id: str, from_block_id: str, to_block_id: str):
-        if self._solution is None:
-            return
-
-        # Mutate block_assignments in-place
-        for ba in self._solution.block_assignments:
-            if ba.team_id == team_id and ba.day == self._day:
-                ba.block_id = to_block_id
-                break
-
-        # Recompute score
-        day_assignments = {da.team_id: da.days for da in self._solution.day_assignments}
-        block_assignments = {
-            (ba.team_id, ba.day): ba.block_id for ba in self._solution.block_assignments
-        }
-        dept_map = get_department_map(list(self._teams_by_id.values()))
-        score, breakdown = compute_total_score(
-            day_assignments, block_assignments,
-            self._teams_by_id, self._blocks_by_id, dept_map,
-        )
-        self._solution.score = score
-        self._solution.score_breakdown = breakdown
-
-        # Rebuild to reflect changes
-        self._rebuild_scene()
-        self.team_moved.emit(team_id, from_block_id, to_block_id, self._day)
 
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.ControlModifier:

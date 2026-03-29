@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import Solution, TeamDayAssignment, TeamBlockAssignment
+from .models import Solution, GroupDayAssignment, GroupBlockAssignment
 
 SOLUTIONS_DIR = Path("solutions")
 
@@ -43,11 +43,16 @@ def solution_to_dict(solution: Solution) -> dict:
         "created_at": solution.created_at,
         "cover_pair": list(solution.cover_pair),
         "day_assignments": [
-            {"team_id": da.team_id, "days": list(da.days)}
+            {"group_id": da.group_id, "days": list(da.days)}
             for da in solution.day_assignments
         ],
         "block_assignments": [
-            {"team_id": ba.team_id, "day": ba.day, "block_id": ba.block_id}
+            {
+                "group_id": ba.group_id,
+                "day": ba.day,
+                "block_id": ba.block_id,
+                "count": ba.count,
+            }
             for ba in solution.block_assignments
         ],
         "score": solution.score,
@@ -62,11 +67,16 @@ def solution_from_dict(d: dict) -> Solution:
         created_at=d["created_at"],
         cover_pair=tuple(d["cover_pair"]),
         day_assignments=[
-            TeamDayAssignment(team_id=da["team_id"], days=tuple(da["days"]))
+            GroupDayAssignment(group_id=da["group_id"], days=tuple(da["days"]))
             for da in d["day_assignments"]
         ],
         block_assignments=[
-            TeamBlockAssignment(team_id=ba["team_id"], day=ba["day"], block_id=ba["block_id"])
+            GroupBlockAssignment(
+                group_id=ba["group_id"],
+                day=ba["day"],
+                block_id=ba["block_id"],
+                count=ba["count"],
+            )
             for ba in d["block_assignments"]
         ],
         score=d["score"],
