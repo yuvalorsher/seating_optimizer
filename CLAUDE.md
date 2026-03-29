@@ -44,7 +44,10 @@ The app is split into a core logic package (`seating_optimizer/`) and a PySide6 
   1. **`DayAssigner`** — assigns day combos to groups using a **dept-common-day strategy**: each dept gets a common day from the cover pair, and every group with members in that dept must attend it. This satisfies the dept-overlap constraint (rule d) and cover constraint by construction. Groups spanning two depts have both mandatory days fixed; single-dept groups pick their second day freely. The solver enumerates all 2^N_depts dept-day combinations.
   2. **`SeatingAssigner`** — per-day bin-packing by group: tries to fit each group in a single block (tightest fit); if too large, splits across blocks within the same column group (column distance ≤ 4). `_compute_column_groups()` pre-computes which blocks are within 4 columns of each other.
   3. **`ConsistencyReconciler`** — post-processes to maximise single-block groups that share the same block on both days. Skips multi-block groups.
-- `updater.py` — Stub only; raises `NotImplementedError`. Not yet updated for the employee/group model.
+- `updater.py` — `SolutionUpdater(blocks, groups_by_id)` — updates an existing solution when group sizes change, with a 3-tier fallback strategy:
+  1. **Minimal repack** — keep same day assignments; pin unchanged groups in their existing blocks; re-seat only changed groups in remaining space.
+  2. **Same cover pair** — if capacity fails, re-run full day + seat assignment using the original cover pair, preserving unchanged groups' day assignments wherever constraints allow.
+  3. **Full solver** — fallback across all cover pairs. Returns a new `Solution` with `metadata["derived_from"]` = original `solution_id`.
 - `persistence.py` — JSON serialization of `Solution` objects; `SOLUTIONS_DIR = Path("solutions")`. The GUI overrides the directory to `~/Library/Application Support/Seating Optimizer/solutions/`. `GroupBlockAssignment` includes a `count` field (employees seated in that block).
 
 ### Desktop GUI (`gui/`)
@@ -69,7 +72,7 @@ Solution combo + day selector (1–4 toggle buttons) + metrics bar (Score, Compa
 Exports the active solution to a 5-page A4 PDF. Pages 1–4: one per day, showing the office grid (rendered via `QGraphicsScene` with read-only `BlockItem`s) with a title and group count. Page 5: solution summary (ID, score, compactness, consistency, cover days), a department meeting days table (each dept's common day derived from the intersection of its groups' day assignments), and the full group schedule table. Uses `QPdfWriter` at 96 DPI — critical: do not change this. The default 1200 DPI causes `BlockItem` fonts to inflate ~9× relative to cell size because Qt scales point-size fonts with the painter world transform during `scene.render()`.
 
 #### `gui/tabs/update_tab.py` — `UpdateTab`
-Placeholder — not yet updated for the employee/group model.
+Solution selector (combo sorted by score) + group sizes table (editable via spinboxes) + "Update Solution" button. Spawns `UpdaterThread`; on completion populates a **diff table** showing every group's changes: size (blue highlight), days (red if changed), block assignments (green if changed). "Save New Solution" persists the result and emits `solution_list_changed`. "Export PDF" exports the updated solution. **Important**: size_overrides only includes groups where the spinbox value differs from the current group size.
 
 #### `gui/tabs/manual_tab.py` — `ManualTab`
 Placeholder — not yet updated for the employee/group model.
@@ -82,7 +85,7 @@ Interactive office grid. `load(solution, day, blocks, groups_by_id, group_color_
 
 #### `gui/threads/`
 - `SolverThread(QThread)` — wraps `Solver.solve(progress_callback)`; takes `blocks` and `groups`; signals: `progress(int, int)`, `finished(list)`, `error(str)`.
-- `UpdaterThread(QThread)` — stub; wraps `SolutionUpdater` (which raises NotImplementedError).
+- `UpdaterThread(QThread)` — wraps `SolutionUpdater.update(solution, size_overrides)`; takes `blocks`, `groups_by_id`, `solution`, `size_overrides`; signals: `finished(object)`, `error(str)`.
 
 ### Key constraints
 
