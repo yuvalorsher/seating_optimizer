@@ -63,7 +63,7 @@ The app is split into a core logic package (`seating_optimizer/`) and a PySide6 
 Central owner of all runtime state. Holds `blocks`, `employees`, `groups`, `groups_by_id`, `employees_by_group`, `dept_map`, `cold_seats`. Signals: `solution_list_changed`, `active_solution_changed(object)`, `active_day_changed(int)`. Solutions dir: `~/Library/Application Support/Seating Optimizer/solutions/` (via `QStandardPaths`). Also checks local `solutions/` for backwards compat. File paths persisted via `QSettings("SeatingOptimizer", "SeatingOptimizer")` — keys: `office_map_path`, `employees_path`, `cold_seats_path`. `group_color(group_id)` returns a stable color hex per group (hash-based from `DEPT_COLORS` palette).
 
 #### `gui/main_window.py` — `MainWindow(QMainWindow)`
-Four-tab layout (Solve / Visualize / Update / Manual). Connects `currentChanged` to trigger `_fit_in_view()` when Visualize tab becomes active. File menu opens office map / employees CSV. Status bar shows block/group/employee/solution counts.
+Five-tab layout (Solve / Visualize / Update / Dept Overlap / Manual). Connects `currentChanged` to trigger `_fit_in_view()` when Visualize tab becomes active. File menu opens office map / employees CSV. Status bar shows block/group/employee/solution counts.
 
 #### `gui/tabs/solve_tab.py` — `SolveTab`
 Settings panel (office map path, employees CSV path, cold seats CSV path, n_solutions, max_iters, seed) + Run Solver button. Spawns `SolverThread`; progress bar connected to `progress` signal. Results list with Save / Delete / Visualize buttons. Schedule table shows: Group, Dept(s), Size, Day 1 → block(s), Day 2 → block(s), Single Block.
@@ -72,10 +72,13 @@ Settings panel (office map path, employees CSV path, cold seats CSV path, n_solu
 Solution combo + day selector (1–4 toggle buttons) + metrics bar (Score, Compactness, Consistency, Cover Days, ID) + group legend + `OfficeGridView` + block/group summary tables + **Export PDF** button. **Important**: `_select_solution_in_combo()` holds `_refreshing_combo` guard to prevent `currentIndexChanged` re-entrancy. All updates go through `_display_solution()` — never re-emit signals from within update handlers.
 
 #### `gui/pdf_exporter.py` — `export_pdf()`
-Exports the active solution to a 5-page A4 PDF. Pages 1–4: one per day, showing the office grid (rendered via `QGraphicsScene` with read-only `BlockItem`s) with a title and group count. Page 5: solution summary (ID, score, compactness, consistency, cover days), a department meeting days table (each dept's common day derived from the intersection of its groups' day assignments), and the full group schedule table. Uses `QPdfWriter` at 96 DPI — critical: do not change this. The default 1200 DPI causes `BlockItem` fonts to inflate ~9× relative to cell size because Qt scales point-size fonts with the painter world transform during `scene.render()`.
+Exports the active solution to a 6-page A4 PDF (more if departments overflow). Pages 1–4: one per day, showing the office grid (rendered via `QGraphicsScene` with read-only `BlockItem`s) with a title and group count. Page 5: solution summary (ID, score, compactness, consistency, cover days), a department meeting days table (each dept's common day derived from the intersection of its groups' day assignments), and the full group schedule table. Page 6+: department attendance tables — one compact table per department showing which days each group attends (cells filled in the group's color). Uses `QPdfWriter` at 96 DPI — critical: do not change this. The default 1200 DPI causes `BlockItem` fonts to inflate ~9× relative to cell size because Qt scales point-size fonts with the painter world transform during `scene.render()`.
 
 #### `gui/tabs/update_tab.py` — `UpdateTab`
 Solution selector (combo sorted by score) + group sizes table (editable via spinboxes) + "Update Solution" button. Spawns `UpdaterThread`; on completion populates a **diff table** showing every group's changes: size (blue highlight), days (red if changed), block assignments (green if changed). "Save New Solution" persists the result and emits `solution_list_changed`. "Export PDF" exports the updated solution. **Important**: size_overrides only includes groups where the spinbox value differs from the current group size.
+
+#### `gui/tabs/dept_overlap_tab.py` — `DeptOverlapTab`
+Solution combo + department combo. Renders a read-only attendance grid: rows = groups in the selected department, columns = Day 1–4, cells filled in the group's color when the group attends that day (light grey otherwise). Syncs with `active_solution_changed` and `solution_list_changed`.
 
 #### `gui/tabs/manual_tab.py` — `ManualTab`
 Placeholder — not yet updated for the employee/group model.

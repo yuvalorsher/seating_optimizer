@@ -11,6 +11,7 @@ from gui.tabs.solve_tab import SolveTab
 from gui.tabs.visualize_tab import VisualizeTab
 from gui.tabs.update_tab import UpdateTab
 from gui.tabs.manual_tab import ManualTab
+from gui.tabs.dept_overlap_tab import DeptOverlapTab
 
 
 class MainWindow(QMainWindow):
@@ -26,11 +27,13 @@ class MainWindow(QMainWindow):
         self._solve_tab = SolveTab(self._state)
         self._visualize_tab = VisualizeTab(self._state)
         self._update_tab = UpdateTab(self._state)
+        self._dept_overlap_tab = DeptOverlapTab(self._state)
         self._manual_tab = ManualTab(self._state)
 
         self._tabs.addTab(self._solve_tab, "Solve")
         self._tabs.addTab(self._visualize_tab, "Visualize")
         self._tabs.addTab(self._update_tab, "Update")
+        self._tabs.addTab(self._dept_overlap_tab, "Dept Overlap")
         self._tabs.addTab(self._manual_tab, "Manual")
 
         self._solve_tab.visualize_requested.connect(self._on_visualize_requested)
@@ -105,7 +108,7 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int):
         if index == 1:  # Visualize tab
             self._visualize_tab._grid._fit_in_view()
-        elif index == 3:  # Manual tab (placeholder — safe stub)
+        elif index == 4:  # Manual tab (placeholder — safe stub)
             self._manual_tab._grid._fit_in_view()
 
     def _on_visualize_requested(self, solution):

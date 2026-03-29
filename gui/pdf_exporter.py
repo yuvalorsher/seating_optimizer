@@ -49,6 +49,9 @@ def export_pdf(
 
         writer.newPage()
         _render_metadata_page(painter, solution, groups_by_id, content)
+
+        writer.newPage()
+        _render_dept_overlap_page(painter, writer, solution, groups_by_id, group_color_fn, content)
     finally:
         painter.end()
 
@@ -308,3 +311,121 @@ def _render_metadata_page(painter, solution, groups_by_id, content):
 
         if y + row_h > content.bottom():
             break
+
+
+# --------------------------------------------------------- dept overlap pages
+
+def _render_dept_overlap_page(painter, writer, solution, groups_by_id, group_color_fn, content):
+    from seating_optimizer.models import DAYS
+
+    # Build dept_map and day lookup
+    dept_map: dict = {}
+    for group in groups_by_id.values():
+        for dept in group.departments:
+            dept_map.setdefault(dept, []).append(group.group_id)
+    day_map = {da.group_id: set(da.days) for da in solution.day_assignments}
+
+    left = content.left()
+    width = content.width()
+    y = content.top()
+
+    # Measure row heights once up front
+    title_font = QFont()
+    title_font.setPointSize(16)
+    title_font.setBold(True)
+    painter.setFont(title_font)
+    title_h = painter.fontMetrics().height() * 1.8
+
+    dept_font = QFont()
+    dept_font.setPointSize(10)
+    dept_font.setBold(True)
+    painter.setFont(dept_font)
+    dept_label_h = painter.fontMetrics().height() * 1.8
+
+    cell_font = QFont()
+    cell_font.setPointSize(8)
+    painter.setFont(cell_font)
+    row_h = painter.fontMetrics().height() * 1.8
+
+    col_name_w = width * 0.38
+    day_col_w = (width - col_name_w) / len(DAYS)
+
+    # Page title
+    painter.setFont(title_font)
+    painter.setPen(QColor("#222222"))
+    painter.drawText(
+        QRectF(left, y, width, title_h),
+        Qt.AlignLeft | Qt.AlignVCenter,
+        "Department Attendance",
+    )
+    y += title_h + 8
+
+    for dept in sorted(dept_map.keys()):
+        group_ids = [gid for gid in dept_map[dept] if gid in day_map]
+        if not group_ids:
+            continue
+
+        # Space needed: dept label + header row + one row per group
+        needed = dept_label_h + row_h * (1 + len(group_ids)) + 14
+        if y + needed > content.bottom():
+            writer.newPage()
+            y = content.top()
+
+        # Department label
+        painter.setFont(dept_font)
+        painter.setPen(QColor("#222222"))
+        painter.drawText(
+            QRectF(left, y, width, dept_label_h),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            dept,
+        )
+        y += dept_label_h
+
+        # Column headers
+        hdr_font = QFont()
+        hdr_font.setPointSize(8)
+        hdr_font.setBold(True)
+        painter.setFont(hdr_font)
+        painter.fillRect(QRectF(left, y, width, row_h), QColor("#e0e0e0"))
+        painter.setPen(QColor("#222222"))
+        painter.drawText(
+            QRectF(left + 4, y, col_name_w - 8, row_h),
+            Qt.AlignLeft | Qt.AlignVCenter, "Group",
+        )
+        for di, day in enumerate(DAYS):
+            cx = left + col_name_w + di * day_col_w
+            painter.drawText(
+                QRectF(cx, y, day_col_w, row_h),
+                Qt.AlignCenter, f"Day {day}",
+            )
+        y += row_h
+
+        # Group rows
+        painter.setFont(cell_font)
+        for ridx, gid in enumerate(group_ids):
+            row_bg = QColor("#f5f5f5") if ridx % 2 == 0 else QColor("#ffffff")
+            painter.fillRect(QRectF(left, y, width, row_h), row_bg)
+
+            painter.setPen(QColor("#222222"))
+            painter.drawText(
+                QRectF(left + 4, y, col_name_w - 8, row_h),
+                Qt.AlignLeft | Qt.AlignVCenter, gid,
+            )
+
+            days = day_map[gid]
+            for di, day in enumerate(DAYS):
+                cx = left + col_name_w + di * day_col_w
+                pad = 3
+                cell_rect = QRectF(cx + pad, y + pad, day_col_w - pad * 2, row_h - pad * 2)
+                if day in days:
+                    painter.fillRect(cell_rect, QColor(group_color_fn(gid)))
+                else:
+                    painter.fillRect(cell_rect, QColor("#EBEBEB"))
+
+            painter.setPen(QPen(QColor("#dddddd"), 0.5))
+            painter.drawLine(
+                QPointF(left, y + row_h), QPointF(left + width, y + row_h)
+            )
+            y += row_h
+
+        y += 14  # gap between departments
