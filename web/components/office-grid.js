@@ -317,6 +317,17 @@ export class OfficeGrid {
 
   _setupDragDrop(svg) {
     svg.addEventListener('pointerdown', (e) => this._onPointerDown(e));
+    svg.addEventListener('contextmenu', (e) => {
+      const chip = e.target.closest('.grid-chip[data-draggable]');
+      if (!chip) return;
+      e.preventDefault();
+      this._emit('chip-contextmenu', {
+        groupId: chip.dataset.groupId,
+        blockId: chip.dataset.blockId || null,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+    });
     if (!this._docListenersAdded) {
       document.addEventListener('pointermove', (e) => this._onPointerMove(e));
       document.addEventListener('pointerup', (e) => this._onPointerUp(e));
@@ -327,6 +338,7 @@ export class OfficeGrid {
   _onPointerDown(e) {
     const chip = e.target.closest('.grid-chip[data-draggable]');
     if (!chip) return;
+    if (e.button !== 0) return; // right-click handled by contextmenu event
 
     e.preventDefault();
     const groupId = chip.dataset.groupId;

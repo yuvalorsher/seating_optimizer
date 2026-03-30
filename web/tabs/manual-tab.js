@@ -253,6 +253,9 @@ export function init() {
 
   _grid.on('drop', _onGridDrop);
   _grid.on('drop-to-pending', _onDropToPending);
+  _grid.on('chip-contextmenu', ({ groupId, blockId, clientX, clientY }) => {
+    _showChipContextMenu({ clientX, clientY, stopPropagation: () => {} }, groupId, blockId);
+  });
 
   // Day buttons
   document.querySelectorAll('.manual-day-btn').forEach(btn => {
@@ -320,8 +323,9 @@ function _buildPendingChip(groupId) {
   chip.style.backgroundColor = groupColor(groupId);
   chip.textContent = groupId;
 
-  // Drag chip from pending panel to grid
+  // Drag chip from pending panel to grid (left-click only)
   chip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     _startExternalDrag(groupId, null, e.clientX, e.clientY);
   });
