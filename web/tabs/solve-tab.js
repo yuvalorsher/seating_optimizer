@@ -219,8 +219,10 @@ async function _runSolver() {
 }
 
 function _deleteAllSolutions() {
-  if (!AppState.solutions.length) return;
-  if (!confirm(`Delete all ${AppState.solutions.length} solution(s)?`)) return;
+  const stored = persistence.listSolutions();
+  const count = stored.length || AppState.solutions.length;
+  if (!count) { alert('No solutions to delete.'); return; }
+  if (!confirm(`Delete all ${count} solution(s)?`)) return;
   persistence.clearAllSolutions();
   AppState.solutions = [];
   AppState.setActiveSolution(null);
