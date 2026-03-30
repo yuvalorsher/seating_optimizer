@@ -34,6 +34,7 @@ function _bindUI() {
   document.getElementById('solve-cold-seats-btn').addEventListener('click', _pickColdSeats);
   document.getElementById('solve-no-cold-seats').addEventListener('change', _onNoColdSeatsToggle);
   document.getElementById('solve-run-btn').addEventListener('click', _runSolver);
+  document.getElementById('solve-delete-all-btn').addEventListener('click', _deleteAllSolutions);
 }
 
 function _updateStatusBar() {
@@ -215,6 +216,15 @@ async function _runSolver() {
     runBtn.disabled = false;
     progress.style.display = 'none';
   }
+}
+
+function _deleteAllSolutions() {
+  if (!AppState.solutions.length) return;
+  if (!confirm(`Delete all ${AppState.solutions.length} solution(s)?`)) return;
+  persistence.clearAllSolutions();
+  AppState.solutions = [];
+  AppState.setActiveSolution(null);
+  AppState.emit('solutionListChanged');
 }
 
 function _setStatus(text) {

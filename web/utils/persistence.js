@@ -45,3 +45,12 @@ export function getOfficeMapOverride() {
 export function clearOfficeMapOverride() {
   localStorage.removeItem(MAP_KEY);
 }
+
+export function clearAllSolutions() {
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(SOL_PREFIX)) keys.push(key);
+  }
+  keys.forEach(k => localStorage.removeItem(k));
+}
