@@ -81,7 +81,26 @@ Solution selector (combo sorted by score) + group sizes table (editable via spin
 Solution combo + department combo. Renders a read-only attendance grid: rows = groups in the selected department, columns = Day 1–4, cells filled in the group's color when the group attends that day (light grey otherwise). Syncs with `active_solution_changed` and `solution_list_changed`.
 
 #### `gui/tabs/manual_tab.py` — `ManualTab`
-Placeholder — not yet updated for the employee/group model.
+Full interactive manual seating editor. Three-pane layout: collapsible settings pane (left) → day selector + `ManualOfficeGrid` + pending panel (center) → group panel (right). Collapsible warnings bar at top.
+
+**`ManualState`** (same file, above `ManualTab`) — single source of truth for a manual session:
+- `day_assignments: dict[str, list[int]]` — 0–2 days per group.
+- `block_assignments: list[GroupBlockAssignment]` — actual seating.
+- A group is "pending" on day X if it has a day assignment but no block assignment for that day.
+- Key methods: `assign_day`, `remove_day`, `seat_group`, `unseat_from_block`, `unseat_all_blocks`, `clear_group`, `get_pending_groups(day)`, `get_seated_count(group_id, day)`, `compute_warnings(...)`, `detect_cover_pair()`, `to_solution(groups_by_id)`, `from_solution(solution)`.
+- `_refresh_all()` rebuilds grid, pending panel, group panel, and warnings from `ManualState` on every mutation.
+
+**Inline inner classes**: `_WarningsBar` (collapsible; green when satisfied, yellow with count when warnings exist), `_CountDialog` (QSpinBox dialog for seat/move operations), `_PendingPanel` (shows pending group chips below grid; accepts drops from blocks and the group panel), `_PendingChip` (draggable colored chip; right-click: add to day, remove from day, clear all).
+
+**Drop handling**: `ManualOfficeGrid.drop_requested` → `_on_drop_requested`. `from_source == ""` (PySide6 coerces `None` → `""` for `Signal(str,str,str)`) means external drag (panel/pending) → show count dialog and seat. Non-empty `from_source` = block-to-block move. Pending panel's `dropEvent` checks `from_block_id` directly from MIME (not via Signal) so `None` stays `None` there.
+
+**Settings pane**: file pickers for office map / employees CSV / cold seats CSV (+ "No cold seats" checkbox) + base-solution combo ("New / Empty" or existing solutions) + Load / Save buttons.
+
+#### `gui/widgets/manual_office_grid.py` — `ManualOfficeGrid(OfficeGridView)`
+Subclass for manual mode. Overrides `_on_group_dropped` to emit `drop_requested(group_id, from_block_id, to_block_id)` instead of mutating solution. Overrides `_rebuild_scene` to: (1) connect `team_right_clicked` → `chip_right_clicked` for all block items; (2) restore user zoom (parent resets it on every rebuild). Sets `_allow_oversize = True` so capacity violations are warnings, not blocked drops.
+
+#### `gui/widgets/manual_group_panel.py` — `ManualGroupPanel`
+Right-side group table (columns: Group / Dept / Day I / Day II / Seated, all `Interactive` resize mode). Drag rows to initiate MIME `application/x-team-chip` with `from_block_id: ""` and `source: "panel"`. Right-click: "Add to day ▶" submenu (days 1–4, disabled if already assigned or 2 days filled), "Clear all group assignments". `refresh(manual_state, groups_by_id)` rebuilds rows.
 
 #### `gui/widgets/block_item.py` — `BlockItem(QGraphicsObject)`
 Paints one seating block: rounded rect, block ID, capacity bar (green/orange/red), group chips. Each chip shows `"GroupName ×N"` colored by group. Hover over a chip shows a tooltip with employee names (`employees_by_group` passed at construction). Initiates drag via `QDrag` with MIME `application/x-team-chip` = `{"team_id": group_id, "from_block_id": "..."}`. **Important**: `QGraphicsItem.ItemIsDropEnabled` flag does not exist in PySide6 6.10 — use `setAcceptDrops(True)` only. Accepts hover events (`setAcceptHoverEvents(True)`) for tooltip display.
