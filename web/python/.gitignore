@@ -1,0 +1,5 @@
+# Python files are copied here by GitHub Actions (deploy.yml)
+# For local dev, run: make web-dev  (or: cp seating_optimizer/*.py web/python/seating_optimizer/)
+*.py
+*.csv
+!*.gitkeep

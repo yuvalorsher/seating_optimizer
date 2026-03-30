@@ -22,6 +22,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Install dependencies
 .venv/bin/pip install -r requirements.txt
+
+# ---- Web app (browser via Pyodide) ----
+
+# Set up for local dev (one-time, copies Python files GitHub Actions would normally copy)
+cp seating_optimizer/*.py web/python/seating_optimizer/
+cp data/office_map.csv data/cold_seats.csv web/python/data/
+
+# Serve locally
+python3 -m http.server 8080 --directory web
+# Then open http://localhost:8080
 ```
 
 ## Architecture
@@ -148,3 +158,26 @@ A group may have **multiple** `block_assignments` for the same day if it overflo
 - Output: `dist/SeatingOptimizer.app`. Drag to `/Applications` to install.
 - Bundled data files land at `Contents/Resources/data/`; `sys._MEIPASS` points to `Contents/Resources/`.
 - **After any code change, the app must be rebuilt** with `.venv/bin/pyinstaller build.spec --clean -y` before the changes are visible in `dist/SeatingOptimizer` or `dist/SeatingOptimizer.app`. Use `.venv/bin/python -m gui.main` for rapid iteration without rebuilding.
+
+### Web app (`web/`)
+
+A browser-based version of the app that runs entirely client-side — no Python installation required. Uses **Pyodide** (CPython compiled to WebAssembly) to run the existing `seating_optimizer/` package unchanged in the browser.
+
+**Deployment**: `.github/workflows/deploy.yml` copies `seating_optimizer/*.py` and `data/{office_map,cold_seats}.csv` into `web/python/` at build time, then deploys `web/` to GitHub Pages. Enable in repo Settings → Pages → Source: **GitHub Actions**.
+
+**Architecture** (`web/`):
+- `index.html` — single-page app shell; all tab HTML inline
+- `app.js` — Pyodide bootstrap (loads CDN runtime, mounts Python files, parses default office map)
+- `worker/solver.worker.js` — Web Worker running a second Pyodide instance; handles `solve` and `update` operations off the main thread
+- `state/app-state.js` — central state singleton + pub/sub event bus (mirrors `AppState`)
+- `components/office-grid.js` — SVG grid renderer; read-only mode (Visualize) and interactive pointer-drag mode (Manual)
+- `tabs/` — one module per tab: `solve`, `visualize`, `update`, `dept-overlap`, `manual`
+- `utils/` — `colors.js` (djb2-hash group colors), `persistence.js` (localStorage), `file-io.js`, `print.js` (window.print PDF)
+- `python/` — empty in repo; populated by CI. **Do not commit `.py` or `.csv` files here** (covered by `web/python/.gitignore`).
+
+**Key design notes**:
+- Python code runs **unchanged** — no modifications to `seating_optimizer/`. Files are written to Pyodide's virtual FS at `/tmp/` and `/home/pyodide/seating_optimizer/`, then imported normally.
+- `ManualState` in `manual-tab.js` is a direct JS port of `ManualState` from `gui/tabs/manual_tab.py`.
+- Score computation for manual solutions is a JS port of `scorer.py` (no Python call needed).
+- Solutions are stored in `localStorage` and can be exported/imported as JSON files.
+- Office map can be overridden via file upload and is persisted to `localStorage`.

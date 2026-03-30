@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seating Optimizer</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading-overlay">
+  <h1>Seating Optimizer</h1>
+  <div class="spinner"></div>
+  <div id="loading-message">Initializing…</div>
+  <p style="color:#718096;font-size:12px;margin-top:8px;">First load takes ~5 seconds (Python runtime download)</p>
+</div>
+
+<!-- App header -->
+<header id="app-header">
+  <h1>Seating Optimizer</h1>
+  <span id="app-status"></span>
+</header>
+
+<!-- Tab bar -->
+<nav id="tab-bar">
+  <button data-tab="solve" class="active">Solve</button>
+  <button data-tab="visualize">Visualize</button>
+  <button data-tab="update">Update</button>
+  <button data-tab="dept-overlap">Dept Overlap</button>
+  <button data-tab="manual">Manual</button>
+</nav>
+
+<!-- Tab content area -->
+<div id="tab-content">
+
+  <!-- ===== SOLVE TAB ===== -->
+  <section class="tab-panel" data-panel="solve">
+    <div class="panel-card settings-section">
+      <div class="panel-title">Settings</div>
+
+      <div class="file-row">
+        <label>Office Map</label>
+        <button class="btn btn-sm" id="solve-override-map-btn">Override</button>
+        <button class="btn btn-sm btn-danger" id="solve-reset-map-btn" style="display:none">Reset</button>
+        <span class="file-name" id="solve-map-name">Default</span>
+      </div>
+
+      <div class="file-row">
+        <label>Employees CSV <span style="color:#E53E3E">*</span></label>
+        <button class="btn btn-sm" id="solve-employees-btn">Upload CSV</button>
+        <span class="file-name" id="solve-employees-name">None loaded</span>
+      </div>
+
+      <div class="file-row">
+        <label>Cold Seats</label>
+        <button class="btn btn-sm" id="solve-cold-seats-btn">Upload CSV</button>
+        <span class="file-name" id="solve-cold-seats-name">Default</span>
+        <label style="min-width:auto;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="solve-no-cold-seats"> None
+        </label>
+      </div>
+
+      <div class="form-row">
+        <label># Solutions</label>
+        <input type="number" id="solve-n-solutions" value="5" min="1" max="9999" style="width:70px">
+        <label>Max iters</label>
+        <input type="number" id="solve-max-iters" value="20" min="4" max="200" style="width:70px">
+        <label>Seed</label>
+        <input type="number" id="solve-seed" placeholder="random" style="width:100px">
+      </div>
+
+      <div class="form-row">
+        <button class="btn" id="solve-run-btn">Run Solver</button>
+        <span id="solve-status-msg" style="color:#718096;font-size:12px;"></span>
+      </div>
+      <progress id="solve-progress" style="display:none"></progress>
+      <div id="solve-status-bar" style="font-size:12px;color:#718096;"></div>
+    </div>
+
+    <div class="panel-card">
+      <div class="panel-title">Results</div>
+      <div class="table-scroll">
+        <table class="data-table" id="solve-results-table">
+          <thead>
+            <tr>
+              <th>Score</th><th>Compact</th><th>Consist.</th><th>Cover</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="solve-schedule-container"></div>
+  </section>
+
+  <!-- ===== VISUALIZE TAB ===== -->
+  <section class="tab-panel" data-panel="visualize" style="display:none">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <select id="viz-solution-select" style="min-width:200px">
+        <option value="">— Select solution —</option>
+      </select>
+
+      <div class="day-btn-group">
+        <button class="day-btn viz-day-btn active" data-day="1">Day 1</button>
+        <button class="day-btn viz-day-btn" data-day="2">Day 2</button>
+        <button class="day-btn viz-day-btn" data-day="3">Day 3</button>
+        <button class="day-btn viz-day-btn" data-day="4">Day 4</button>
+      </div>
+
+      <div class="zoom-bar">
+        <button id="viz-zoom-in">+</button>
+        <button id="viz-zoom-out">−</button>
+        <button id="viz-zoom-fit" title="Fit to view">⊡</button>
+      </div>
+
+      <button class="btn btn-sm" id="viz-export-pdf">Export PDF</button>
+      <button class="btn btn-sm btn-secondary" id="viz-import-btn">Import JSON</button>
+    </div>
+
+    <div id="viz-metrics" class="metrics-bar"></div>
+
+    <div id="viz-legend" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+
+    <div class="grid-wrapper" id="viz-grid" style="flex:1;min-height:300px;"></div>
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:220px;">
+        <div class="panel-title">Block Summary (Day <span id="viz-day-label">1</span>)</div>
+        <div class="table-scroll">
+          <table class="data-table" id="viz-block-table">
+            <thead><tr><th>Block</th><th>Seats</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div style="flex:2;min-width:320px;">
+        <div class="panel-title">Group Summary</div>
+        <div class="table-scroll">
+          <table class="data-table" id="viz-group-table">
+            <thead><tr><th>Group</th><th>Dept(s)</th><th>Size</th><th>Days</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== UPDATE TAB ===== -->
+  <section class="tab-panel" data-panel="update" style="display:none">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <label><strong>Base solution:</strong></label>
+      <select id="upd-solution-select" style="min-width:200px">
+        <option value="">— Select solution —</option>
+      </select>
+      <button class="btn" id="upd-run-btn">Update Solution</button>
+      <progress id="upd-progress" style="display:none;width:150px;"></progress>
+      <button class="btn btn-sm" id="upd-save-btn" disabled>Save New Solution</button>
+      <button class="btn btn-sm" id="upd-export-btn" disabled>Export PDF</button>
+    </div>
+
+    <div style="display:flex;gap:16px;flex-wrap:wrap;flex:1;overflow:hidden;min-height:0;">
+      <div style="min-width:280px;overflow-y:auto;">
+        <div class="panel-title">Group Sizes</div>
+        <table class="data-table" id="upd-sizes-table">
+          <thead><tr><th>Group</th><th>Current</th><th>New</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;" id="upd-diff-container">
+        <div class="panel-title">Changes</div>
+        <p style="color:#718096;font-size:12px;">Run an update to see changes.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== DEPT OVERLAP TAB ===== -->
+  <section class="tab-panel" data-panel="dept-overlap" style="display:none">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <select id="dept-solution-select" style="min-width:200px">
+        <option value="">— Select solution —</option>
+      </select>
+      <select id="dept-select" style="min-width:160px">
+        <option value="">— Select department —</option>
+      </select>
+    </div>
+    <div id="dept-overlap-grid" class="table-scroll"></div>
+  </section>
+
+  <!-- ===== MANUAL TAB ===== -->
+  <section class="tab-panel" data-panel="manual" style="display:none">
+    <div id="manual-warnings-bar" class="warnings-bar warnings-ok">
+      <span>✓ All constraints satisfied</span>
+    </div>
+
+    <div class="manual-layout" style="flex:1;overflow:hidden;">
+
+      <!-- Left settings pane -->
+      <div class="manual-settings panel-card" style="overflow-y:auto;">
+        <div class="panel-title">Session</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <label style="font-size:12px;">Base solution</label>
+          <select id="manual-base-solution-select" style="width:100%">
+            <option value="">New / Empty</option>
+          </select>
+          <button class="btn btn-sm" id="manual-load-solution-btn">Load</button>
+          <hr style="border:none;border-top:1px solid #E2E8F0;margin:4px 0;">
+          <button class="btn btn-sm" id="manual-save-btn">Save as Solution</button>
+          <button class="btn btn-sm btn-danger" id="manual-clear-btn">Clear All</button>
+        </div>
+      </div>
+
+      <!-- Center: grid + pending -->
+      <div class="manual-center">
+        <div class="day-btn-group">
+          <button class="day-btn manual-day-btn active" data-day="1">Day 1</button>
+          <button class="day-btn manual-day-btn" data-day="2">Day 2</button>
+          <button class="day-btn manual-day-btn" data-day="3">Day 3</button>
+          <button class="day-btn manual-day-btn" data-day="4">Day 4</button>
+        </div>
+        <div class="grid-wrapper" id="manual-grid-container" style="flex:1;min-height:200px;"></div>
+        <div>
+          <div class="panel-title">Pending (drag to block)</div>
+          <div class="pending-panel" id="manual-pending-panel" data-pending-drop="true">
+            <span style="color:#718096;font-size:12px;">No pending groups.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: group panel -->
+      <div class="manual-right panel-card">
+        <div class="panel-title">Groups</div>
+        <div class="table-scroll">
+          <table class="data-table" id="manual-group-table">
+            <thead>
+              <tr>
+                <th>Group</th><th>Dept</th><th>Day I</th><th>Day II</th><th>Seated</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /tab-content -->
+
+<!-- Context menu (Manual tab) -->
+<div id="manual-context-menu"></div>
+
+<!-- Count dialog (Manual tab) -->
+<dialog id="manual-count-dialog">
+  <div class="dialog-title" id="manual-count-title">How many employees?</div>
+  <div class="form-row">
+    <label>Count:</label>
+    <input type="number" id="manual-count-input" min="1" max="500" value="1" style="width:80px">
+  </div>
+  <div class="dialog-actions">
+    <button class="btn btn-sm btn-danger" id="manual-count-cancel">Cancel</button>
+    <button class="btn btn-sm" id="manual-count-ok">OK</button>
+  </div>
+</dialog>
+
+<!-- Print area (hidden, used by PDF export) -->
+<div id="print-area"></div>
+
+</body>
+</html>
