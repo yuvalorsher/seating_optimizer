@@ -475,7 +475,11 @@ class _PendingChip(QFrame):
         clear_action.triggered.connect(
             lambda: self.clear_group_requested.emit(self._group_id)
         )
-        menu.exec(self.mapToGlobal(pos))
+        # Open above the click point so the menu doesn't go off-screen at the bottom
+        global_pos = self.mapToGlobal(pos)
+        menu.adjustSize()
+        adjusted = global_pos - QPoint(0, menu.sizeHint().height())
+        menu.exec(adjusted)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -719,7 +723,7 @@ class ManualTab(QWidget):
     def _refresh_all(self):
         self._reload_grid()
         self._pending_panel.refresh(self._manual_state, self._current_day)
-        self._group_panel.refresh(self._manual_state, self._state.groups_by_id)
+        self._group_panel.refresh(self._manual_state, self._state.groups_by_id, self._current_day)
         self._reload_warnings()
 
     def _reload_grid(self):
@@ -939,6 +943,7 @@ class ManualTab(QWidget):
         if path:
             self._state.set_office_map_path(path)
             self._update_path_labels()
+            self._reload_data_and_refresh()
 
     def _browse_employees(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -947,6 +952,7 @@ class ManualTab(QWidget):
         if path:
             self._state.set_employees_path(path)
             self._update_path_labels()
+            self._reload_data_and_refresh()
 
     def _browse_cold_seats(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -955,6 +961,16 @@ class ManualTab(QWidget):
         if path:
             self._state.set_cold_seats_path(path)
             self._update_path_labels()
+            self._reload_data_and_refresh()
+
+    def _reload_data_and_refresh(self):
+        """Reload data files and refresh the UI without resetting ManualState."""
+        try:
+            self._state.load_data_files()
+        except Exception as exc:
+            QMessageBox.warning(self, "Load Error", f"Failed to load data files:\n{exc}")
+            return
+        self._refresh_all()
 
     def _on_no_cold_seats_toggled(self, checked: bool):
         self._no_cold_seats = checked

@@ -104,13 +104,13 @@ Full interactive manual seating editor. Three-pane layout: collapsible settings 
 
 **Drop handling**: `ManualOfficeGrid.drop_requested` → `_on_drop_requested`. `from_source == ""` (PySide6 coerces `None` → `""` for `Signal(str,str,str)`) means external drag (panel/pending) → show count dialog and seat. Non-empty `from_source` = block-to-block move. Pending panel's `dropEvent` checks `from_block_id` directly from MIME (not via Signal) so `None` stays `None` there.
 
-**Settings pane**: file pickers for office map / employees CSV / cold seats CSV (+ "No cold seats" checkbox) + base-solution combo ("New / Empty" or existing solutions) + Load / Save buttons.
+**Settings pane**: file pickers for office map / employees CSV / cold seats CSV (+ "No cold seats" checkbox) + base-solution combo ("New / Empty" or existing solutions) + Load / Save buttons. Browsing any file immediately reloads data files and refreshes the UI (without resetting ManualState); Load button additionally resets ManualState from the selected base solution.
 
 #### `gui/widgets/manual_office_grid.py` — `ManualOfficeGrid(OfficeGridView)`
 Subclass for manual mode. Overrides `_on_group_dropped` to emit `drop_requested(group_id, from_block_id, to_block_id)` instead of mutating solution. Overrides `_rebuild_scene` to: (1) connect `team_right_clicked` → `chip_right_clicked` for all block items; (2) restore user zoom (parent resets it on every rebuild). Sets `_allow_oversize = True` so capacity violations are warnings, not blocked drops.
 
 #### `gui/widgets/manual_group_panel.py` — `ManualGroupPanel`
-Right-side group table (columns: Group / Dept / Day I / Day II / Seated, all `Interactive` resize mode). Drag rows to initiate MIME `application/x-team-chip` with `from_block_id: ""` and `source: "panel"`. Right-click: "Add to day ▶" submenu (days 1–4, disabled if already assigned or 2 days filled), "Clear all group assignments". `refresh(manual_state, groups_by_id)` rebuilds rows.
+Right-side group table (columns: Group / Dept / Day I / Day II / Seated, all `Interactive` resize mode). Drag rows to initiate MIME `application/x-team-chip` with `from_block_id: ""` and `source: "panel"`. Right-click: "Add to day ▶" submenu (days 1–4, disabled if already assigned or 2 days filled), "Clear all group assignments". `refresh(manual_state, groups_by_id, current_day)` rebuilds rows. Seated column shows `seated_on_current_day/group_size` (e.g. `5/11`).
 
 #### `gui/widgets/block_item.py` — `BlockItem(QGraphicsObject)`
 Paints one seating block: rounded rect, block ID, capacity bar (green/orange/red), group chips. Each chip shows `"GroupName ×N"` colored by group. Hover over a chip shows a tooltip with employee names (`employees_by_group` passed at construction). Initiates drag via `QDrag` with MIME `application/x-team-chip` = `{"team_id": group_id, "from_block_id": "..."}`. **Important**: `QGraphicsItem.ItemIsDropEnabled` flag does not exist in PySide6 6.10 — use `setAcceptDrops(True)` only. Accepts hover events (`setAcceptHoverEvents(True)`) for tooltip display.

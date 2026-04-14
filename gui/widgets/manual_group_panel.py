@@ -55,7 +55,7 @@ class ManualGroupPanel(QWidget):
 
         self.setMinimumWidth(200)
 
-    def refresh(self, manual_state, groups_by_id: dict) -> None:
+    def refresh(self, manual_state, groups_by_id: dict, current_day: int = 1) -> None:
         """Rebuild table rows from current ManualState."""
         self._table.setRowCount(0)
         self._group_ids = []
@@ -95,18 +95,15 @@ class ManualGroupPanel(QWidget):
             day2_item.setData(Qt.UserRole, gid)
             self._table.setItem(row, 3, day2_item)
 
-            # Seated/Total — sum across all days
-            total_seated = sum(
-                manual_state.get_seated_count(gid, d) for d in days
-            )
-            expected = group.size * len(days)
-            seated_text = f"{total_seated}/{expected}"
+            # Seated on current day / group size (e.g. "5/11")
+            seated_today = manual_state.get_seated_count(gid, current_day)
+            seated_text = f"{seated_today}/{group.size}"
             seated_item = QTableWidgetItem(seated_text)
             seated_item.setTextAlignment(Qt.AlignCenter)
             seated_item.setData(Qt.UserRole, gid)
-            if expected > 0 and total_seated == expected:
+            if current_day in days and seated_today == group.size:
                 seated_item.setForeground(QBrush(QColor("#27AE60")))
-            elif total_seated > 0:
+            elif seated_today > 0:
                 seated_item.setForeground(QBrush(QColor("#F5A623")))
             self._table.setItem(row, 4, seated_item)
 
